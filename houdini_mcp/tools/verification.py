@@ -1,4 +1,4 @@
-"""Learning-specific tools — screenshot comparison, network export, scene diff.
+"""Verification tools — screenshot comparison, network export, scene diff.
 
 These tools support an agent's ability to verify its Houdini operations
 against expected results using SSIM comparison and scene diffing.

@@ -25,7 +25,7 @@ embedded Python version (3.10 for H20.5, 3.11 for H21.0) is independent.
 
 ## Requirements
 
-- Python 3.11+ (external environment — conda or venv)
+- Python 3.11+
 - SideFX Houdini 20.5 or 21.0
 - Windows (screen capture tools use Win32 API; all other tools are cross-platform)
 
@@ -36,7 +36,14 @@ embedded Python version (3.10 for H20.5, 3.11 for H21.0) is independent.
 git clone https://github.com/<your-org>/houdini-mcp.git
 cd houdini-mcp
 
-# Install in a Python 3.11+ environment
+# Create and activate venv
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+# source .venv/bin/activate
+
+# Install
 pip install -e .
 
 # Install dev dependencies (optional, for running tests)
@@ -51,7 +58,7 @@ Add to `.claude/settings.local.json` in your project (or copy the one in this re
 {
   "mcpServers": {
     "houdini": {
-      "command": "/path/to/python3.11",
+      "command": "/path/to/houdini-mcp/.venv/Scripts/python.exe",
       "args": ["-m", "houdini_mcp"],
       "cwd": "/path/to/houdini-mcp"
     }
@@ -59,8 +66,8 @@ Add to `.claude/settings.local.json` in your project (or copy the one in this re
 }
 ```
 
-Replace `/path/to/python3.11` with your Python 3.11+ interpreter and
-`/path/to/houdini-mcp` with the directory containing this README.
+Replace `/path/to/houdini-mcp` with the directory containing this README.
+The `command` should point to the venv's Python interpreter.
 
 The MCP server communicates via **stdio** transport (FastMCP default) — no HTTP
 server or port needed for the MCP connection itself. Only the RPyC link to
@@ -97,21 +104,51 @@ get_geometry_info("/obj/mysphere/sphere1")
 viewport_screenshot("/tmp/view.png")
 ```
 
-## Available Tools (37 total)
+## Available Tools (41 total)
 
-| Category | Tools |
-|---|---|
-| **Lifecycle** | `get_houdini_status`, `start_houdini`, `stop_houdini`, `ensure_houdini_ready`, `install_startup_scripts` |
-| **Scene** | `new_scene`, `save_hip`, `open_hip`, `get_scene_summary` |
-| **Nodes** | `create_node`, `delete_node`, `get_node_info`, `get_node_tree`, `get_node_children` |
-| **Parameters** | `get_parameter`, `set_parameter`, `get_parm_template` |
-| **Connections** | `connect_nodes`, `disconnect_nodes`, `get_connections` |
-| **Execution** | `execute_python`, `cook_node`, `get_node_errors` |
-| **Geometry** | `get_geometry_info`, `get_point_positions`, `get_attribute_values` |
-| **Viewport** | `viewport_screenshot`, `set_viewport` |
-| **Render** | `render_frame`, `render_preview` |
-| **Learning** | `compare_screenshots`, `export_node_network`, `get_scene_diff` |
-| **Screen** | `capture_houdini_windows`, `get_houdini_windows`, `capture_screen`, `check_process_status` |
+| Category | Tools | Count |
+|---|---|---|
+| **Lifecycle** | `install_startup_scripts`, `get_houdini_status`, `start_houdini`, `stop_houdini`, `ensure_houdini_ready` | 5 |
+| **Scene** | `new_scene`, `save_hip`, `open_hip`, `get_scene_summary` | 4 |
+| **Nodes** | `create_node`, `delete_node`, `get_node_info`, `get_node_tree`, `get_node_children` | 5 |
+| **Parameters** | `get_parameter`, `set_parameter`, `get_parm_template` | 3 |
+| **Connections** | `connect_nodes`, `disconnect_nodes`, `get_connections` | 3 |
+| **Execution** | `execute_python`, `cook_node`, `get_node_errors` | 3 |
+| **Geometry** | `get_geometry_info`, `get_point_positions`, `get_attribute_values` | 3 |
+| **Viewport** | `viewport_screenshot`, `set_viewport` | 2 |
+| **Render** | `render_frame`, `render_preview` | 2 |
+| **Verification** | `compare_screenshots`, `export_node_network`, `get_scene_diff` | 3 |
+| **Screen** | `capture_houdini_windows`, `capture_screen`, `get_houdini_windows`, `check_process_status` | 4 |
+| **Events** | `start_event_monitoring`, `stop_event_monitoring`, `get_event_log`, `get_event_monitoring_status` | 4 |
+
+## Project Structure
+
+```
+houdini-mcp/
+├── houdini_mcp/                  # MCP server package
+│   ├── __main__.py               # Entry point: python -m houdini_mcp
+│   ├── server.py                 # FastMCP instance + global HoudiniConnection
+│   ├── connection.py             # RPyC connection manager (auto-reconnect)
+│   ├── utils.py                  # RPyC netref → native Python conversion
+│   └── tools/                    # Tool modules (each registers @mcp.tool)
+│       ├── lifecycle.py          # Start/stop/status Houdini process
+│       ├── scene.py              # New/save/open scenes
+│       ├── nodes.py              # Create/delete/inspect nodes
+│       ├── parameters.py         # Get/set node parameters
+│       ├── connections.py        # Wire/unwire node connections
+│       ├── execution.py          # Execute Python code, cook nodes
+│       ├── geometry.py           # Inspect geometry data
+│       ├── viewport.py           # Viewport screenshot, camera control
+│       ├── render.py             # ROP rendering
+│       ├── verification.py       # SSIM image comparison, scene diff
+│       ├── screen.py             # Win32 window capture
+│       └── events.py             # Scene event monitoring
+├── houdini_plugin/
+│   └── houdini_mcp_startup.py    # Deployed to Houdini prefs (starts RPyC)
+├── tests/                        # Integration tests
+├── pyproject.toml                # Package config & dependencies
+└── .venv/                        # Virtual environment (not tracked)
+```
 
 ## Houdini Version Support
 

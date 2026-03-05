@@ -32,7 +32,7 @@ import houdini_mcp.tools.execution  # noqa: E402, F401
 import houdini_mcp.tools.geometry  # noqa: E402, F401
 import houdini_mcp.tools.viewport  # noqa: E402, F401
 import houdini_mcp.tools.render  # noqa: E402, F401
-import houdini_mcp.tools.learning  # noqa: E402, F401
+import houdini_mcp.tools.verification  # noqa: E402, F401
 import houdini_mcp.tools.lifecycle  # noqa: E402, F401
 import houdini_mcp.tools.screen  # noqa: E402, F401
 import houdini_mcp.tools.events  # noqa: E402, F401
