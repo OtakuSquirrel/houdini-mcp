@@ -12,7 +12,6 @@ from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
 
-_SFX_ROOT = Path("C:/Program Files/Side Effects Software")
 _PLUGIN_DIR = Path(__file__).resolve().parent.parent.parent.parent / "houdini_plugin"
 _STARTUP_SCRIPT = _PLUGIN_DIR / "houdini_mcp_startup.py"
 
@@ -25,25 +24,33 @@ _HOOK_LINE = (
 
 
 def _find_installations() -> list[dict]:
-    """Discover installed Houdini versions."""
+    """Discover installed Houdini versions from configured search paths."""
+    from houdini_mcp.config import get_houdini_search_paths
+
     results = []
-    if not _SFX_ROOT.exists():
-        return results
-    for d in sorted(_SFX_ROOT.iterdir(), reverse=True):
-        if d.name.startswith("Houdini ") and d.is_dir():
-            version = d.name.replace("Houdini ", "")
-            hython = d / "bin" / "hython.exe"
-            gui_exe = d / "bin" / "houdinifx.exe"
-            if not gui_exe.exists():
-                gui_exe = d / "bin" / "houdini.exe"
-            entry = {"version": version, "dir": str(d)}
-            if gui_exe.exists():
-                entry["gui_exe"] = str(gui_exe)
-            if hython.exists():
-                entry["hython"] = str(hython)
-            if gui_exe.exists() or hython.exists():
-                entry["startup_installed"] = _check_startup_installed(version)
-                results.append(entry)
+    seen_versions: set[str] = set()
+    for search_path_str in get_houdini_search_paths():
+        search_root = Path(search_path_str)
+        if not search_root.exists():
+            continue
+        for d in sorted(search_root.iterdir(), reverse=True):
+            if d.name.startswith("Houdini ") and d.is_dir():
+                version = d.name.replace("Houdini ", "")
+                if version in seen_versions:
+                    continue
+                hython = d / "bin" / "hython.exe"
+                gui_exe = d / "bin" / "houdinifx.exe"
+                if not gui_exe.exists():
+                    gui_exe = d / "bin" / "houdini.exe"
+                entry = {"version": version, "dir": str(d)}
+                if gui_exe.exists():
+                    entry["gui_exe"] = str(gui_exe)
+                if hython.exists():
+                    entry["hython"] = str(hython)
+                if gui_exe.exists() or hython.exists():
+                    entry["startup_installed"] = _check_startup_installed(version)
+                    seen_versions.add(version)
+                    results.append(entry)
     return results
 
 

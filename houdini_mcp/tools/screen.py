@@ -129,7 +129,14 @@ def capture_houdini_windows(
 ) -> list[dict]:
     """Capture screenshots of ALL Houdini windows (main window + floating panels + dialogs).
 
-    This is the primary tool for visually inspecting Houdini's state.
+    EXPERIMENTAL: Requires Houdini running in GUI mode with a visible viewport.
+    For headless rendering, use render_frame or render_preview instead.
+
+    PREFERRED over capture_screen for all Houdini-related tasks.
+    Always use this tool instead of capture_screen when you need to see
+    Houdini's state — it only captures Houdini windows, avoiding other
+    applications and protecting user privacy.
+
     It captures every window belonging to the Houdini process, including:
     - Main application window
     - Floating parameter editors
@@ -202,8 +209,14 @@ def capture_screen(
 ) -> dict:
     """Capture a screenshot of the entire desktop or a specific region.
 
-    Use capture_houdini_windows instead if you only need Houdini.
-    Use this tool for:
+    WARNING: This captures the ENTIRE screen, which may include other
+    applications and sensitive user information. Only use this when you
+    specifically need to see the full desktop or a non-Houdini region.
+
+    For Houdini-related tasks, ALWAYS use capture_houdini_windows instead —
+    it captures only Houdini windows and protects user privacy.
+
+    Use this tool ONLY for:
     - Capturing the full desktop to see all applications
     - Capturing a specific screen region by coordinates
 

@@ -27,6 +27,7 @@ _DEFAULT_CONFIG = {
         "auto_start_rpyc": True,
     },
     "port_range": [18811, 18899],
+    "houdini_search_paths": ["C:/Program Files/Side Effects Software"],
 }
 
 _lock = threading.Lock()
@@ -69,6 +70,15 @@ def update_config(updates: dict[str, Any]) -> dict[str, Any]:
     merged = _deep_merge(config, updates)
     save_config(merged)
     return merged
+
+
+def get_houdini_search_paths() -> list[str]:
+    """Return list of directories to scan for Houdini installations."""
+    config = load_config()
+    return config.get(
+        "houdini_search_paths",
+        _DEFAULT_CONFIG["houdini_search_paths"],
+    )
 
 
 def get_port_range() -> tuple[int, int]:

@@ -292,6 +292,7 @@
       <a href="/">Dashboard</a>
       <a href="/config" class="active">HouConfig</a>
       <a href="/agent-config">AgentConfig</a>
+      <a href="/tools">MCP Tools</a>
     </nav>
     <div class="spacer"></div>
     <div class="health-dot" id="health-dot"></div>
@@ -313,9 +314,9 @@
         <div class="config-row">
           <div>
             <div class="config-label">Agent Launch: Auto-start RPyC</div>
-            <div class="config-desc">Start RPyC listener when Agent launches Houdini</div>
+            <div class="config-desc">Always enabled — Agent requires RPyC to communicate with Houdini</div>
           </div>
-          <div class="toggle on" id="toggle-agent" onclick="toggleConfig('agent')"></div>
+          <div class="toggle on" id="toggle-agent" style="opacity:0.5;pointer-events:none;"></div>
         </div>
       </div>
     </div>
@@ -335,6 +336,24 @@
             <input type="number" id="port-max" value="18899">
             <button class="btn btn-accent" onclick="savePortRange()">Save</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Houdini Search Paths -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Houdini Search Paths</span></div>
+      <div class="card-body">
+        <div class="config-desc" style="margin-bottom:12px;">
+          Directories to scan for Houdini installations (e.g. <code>C:/Program Files/Side Effects Software</code>).
+          Each directory should contain <code>Houdini X.Y.Z</code> subdirectories.
+        </div>
+        <div id="search-paths-list"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;">
+          <input type="text" id="new-search-path" placeholder="D:/Program Files/Side Effects Software"
+                 style="flex:1;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;font-family:'Cascadia Code','Consolas',monospace;">
+          <button class="btn btn-ghost" onclick="addSearchPath()">Add</button>
+          <button class="btn btn-accent" onclick="saveSearchPaths()">Save</button>
         </div>
       </div>
     </div>
@@ -410,6 +429,50 @@
         document.getElementById('port-min').value = data.port_range[0];
         document.getElementById('port-max').value = data.port_range[1];
       }
+      _searchPaths = data.houdini_search_paths || ['C:/Program Files/Side Effects Software'];
+      renderSearchPaths();
+    }
+
+    // ── Search Paths ──
+    let _searchPaths = [];
+
+    function renderSearchPaths() {
+      const el = document.getElementById('search-paths-list');
+      if (!_searchPaths.length) {
+        el.innerHTML = '<div style="color:var(--text-dim);font-size:12px;">No paths configured</div>';
+        return;
+      }
+      el.innerHTML = _searchPaths.map((p, i) => `
+        <div class="config-row" style="padding:6px 0;">
+          <span style="font-size:12px;font-family:'Cascadia Code','Consolas',monospace;color:var(--code-text);">${p}</span>
+          <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px;" onclick="removeSearchPath(${i})">Remove</button>
+        </div>
+      `).join('');
+    }
+
+    function addSearchPath() {
+      const input = document.getElementById('new-search-path');
+      const p = input.value.trim().replace(/\\/g, '/');
+      if (!p) return;
+      if (_searchPaths.includes(p)) { showToast('Path already exists'); return; }
+      _searchPaths.push(p);
+      input.value = '';
+      renderSearchPaths();
+    }
+
+    function removeSearchPath(idx) {
+      _searchPaths.splice(idx, 1);
+      renderSearchPaths();
+    }
+
+    async function saveSearchPaths() {
+      await api('/api/config', {
+        method: 'PUT',
+        body: JSON.stringify({ houdini_search_paths: _searchPaths }),
+      });
+      showToast('Search paths saved');
+      loadInjections();
+      loadVersions();
     }
 
     async function toggleConfig(type) {

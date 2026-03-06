@@ -24,8 +24,6 @@ from pathlib import Path
 from houdini_mcp.server import mcp, houdini, set_port, get_session_id
 from houdini_mcp import registry
 
-# Houdini installation discovery (Windows)
-_SFX_ROOT = Path("C:/Program Files/Side Effects Software")
 # Process tracking now handled by ConnectionManager (houdini._processes)
 
 # Startup script source (single source of truth)
@@ -34,27 +32,35 @@ _STARTUP_SCRIPT = _PLUGIN_DIR / "houdini_mcp_startup.py"
 
 
 def _find_houdini_installations() -> list[dict]:
-    """Discover installed Houdini versions."""
+    """Discover installed Houdini versions from configured search paths."""
+    from houdini_mcp.config import get_houdini_search_paths
+
     results = []
-    if not _SFX_ROOT.exists():
-        return results
-    for d in sorted(_SFX_ROOT.iterdir(), reverse=True):
-        if d.name.startswith("Houdini ") and d.is_dir():
-            version = d.name.replace("Houdini ", "")
-            hython = d / "bin" / "hython.exe"
-            gui_exe = d / "bin" / "houdinifx.exe"
-            if not gui_exe.exists():
-                gui_exe = d / "bin" / "houdini.exe"
-            entry = {
-                "version": version,
-                "dir": str(d),
-            }
-            if gui_exe.exists():
-                entry["gui_exe"] = str(gui_exe)
-            if hython.exists():
-                entry["hython"] = str(hython)
-            if gui_exe.exists() or hython.exists():
-                results.append(entry)
+    seen_versions: set[str] = set()
+    for search_path_str in get_houdini_search_paths():
+        search_root = Path(search_path_str)
+        if not search_root.exists():
+            continue
+        for d in sorted(search_root.iterdir(), reverse=True):
+            if d.name.startswith("Houdini ") and d.is_dir():
+                version = d.name.replace("Houdini ", "")
+                if version in seen_versions:
+                    continue
+                hython = d / "bin" / "hython.exe"
+                gui_exe = d / "bin" / "houdinifx.exe"
+                if not gui_exe.exists():
+                    gui_exe = d / "bin" / "houdini.exe"
+                entry = {
+                    "version": version,
+                    "dir": str(d),
+                }
+                if gui_exe.exists():
+                    entry["gui_exe"] = str(gui_exe)
+                if hython.exists():
+                    entry["hython"] = str(hython)
+                if gui_exe.exists() or hython.exists():
+                    seen_versions.add(version)
+                    results.append(entry)
     return results
 
 
@@ -162,7 +168,10 @@ def install_startup_scripts(version: str | None = None) -> dict:
 
     installations = _find_houdini_installations()
     if not installations:
-        raise RuntimeError(f"No Houdini installations found in {_SFX_ROOT}")
+        raise RuntimeError(
+            "No Houdini installations found. "
+            "Configure search paths in WebUI or install Houdini."
+        )
 
     if version is not None:
         targets = [i for i in installations if i["version"].startswith(version)]
@@ -333,8 +342,8 @@ def start_houdini(
     installations = _find_houdini_installations()
     if not installations:
         raise RuntimeError(
-            f"No Houdini installation found in {_SFX_ROOT}. "
-            "Install Houdini or provide a custom path."
+            "No Houdini installation found. "
+            "Configure search paths in WebUI or install Houdini."
         )
 
     inst = None

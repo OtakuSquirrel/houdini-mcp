@@ -12,8 +12,12 @@ The RPyC port is determined by (in priority order):
 import logging
 import os
 
+from collections.abc import Sequence
+
+import mcp.types as mt
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware
+from fastmcp.tools.tool import Tool, ToolResult
 
 from houdini_mcp.connection import ConnectionManager
 
@@ -52,11 +56,39 @@ class _ClientNameMiddleware(Middleware):
         return result
 
 
+class _ToolGuardMiddleware(Middleware):
+    """Block disabled tools at runtime based on config.
+
+    Checks ~/houdini_mcp/config.json on each tool call. If the tool
+    is disabled, returns an error without executing it. Also filters
+    disabled tools from the tools/list response so agents don't see them.
+    """
+
+    async def on_call_tool(self, context, call_next):
+        tool_name = context.message.name
+        from houdini_mcp.tool_registry import is_tool_enabled
+        if not is_tool_enabled(tool_name):
+            return ToolResult(
+                content=[mt.TextContent(
+                    type="text",
+                    text=f"Tool '{tool_name}' is currently disabled. "
+                         f"Enable it in the WebUI MCP Tools page.",
+                )]
+            )
+        return await call_next(context)
+
+    async def on_list_tools(self, context, call_next):
+        tools: Sequence[Tool] = await call_next(context)
+        from houdini_mcp.tool_registry import get_disabled_tools
+        disabled = set(get_disabled_tools())
+        return [t for t in tools if t.name not in disabled]
+
+
 # FastMCP server
 mcp = FastMCP(
     "houdini",
     instructions="MCP Server for controlling Houdini via RPyC",
-    middleware=[_ClientNameMiddleware()],
+    middleware=[_ClientNameMiddleware(), _ToolGuardMiddleware()],
 )
 
 

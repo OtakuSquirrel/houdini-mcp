@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from houdini_mcp.webui.routes import config_routes, session_routes, houdini_routes, agent_routes
+from houdini_mcp.webui.routes import config_routes, session_routes, houdini_routes, agent_routes, tool_routes
 
 app = FastAPI(
     title="Houdini MCP Manager",
@@ -29,6 +29,7 @@ app.include_router(config_routes.router, prefix="/api/config", tags=["config"])
 app.include_router(session_routes.router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(houdini_routes.router, prefix="/api/houdini", tags=["houdini"])
 app.include_router(agent_routes.router, prefix="/api/agents", tags=["agents"])
+app.include_router(tool_routes.router, prefix="/api/tools", tags=["tools"])
 
 # Serve static frontend files
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -61,6 +62,15 @@ async def agent_config():
     if agent_file.exists():
         return FileResponse(str(agent_file))
     return {"message": "Agent config page not found"}
+
+
+@app.get("/tools")
+async def tools_page():
+    """Serve the MCP Tools management page."""
+    tools_file = _STATIC_DIR / "tools.html"
+    if tools_file.exists():
+        return FileResponse(str(tools_file))
+    return {"message": "Tools page not found"}
 
 
 @app.get("/health")

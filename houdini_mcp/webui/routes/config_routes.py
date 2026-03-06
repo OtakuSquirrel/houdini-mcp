@@ -17,6 +17,7 @@ class ConfigUpdate(BaseModel):
     human_launch: dict[str, Any] | None = None
     agent_launch: dict[str, Any] | None = None
     port_range: list[int] | None = None
+    houdini_search_paths: list[str] | None = None
 
 
 @router.get("")
@@ -38,6 +39,8 @@ async def update_config(updates: ConfigUpdate):
         update_dict["agent_launch"] = updates.agent_launch
     if updates.port_range is not None:
         update_dict["port_range"] = updates.port_range
+    if updates.houdini_search_paths is not None:
+        update_dict["houdini_search_paths"] = updates.houdini_search_paths
 
     if not update_dict:
         return config.load_config()
