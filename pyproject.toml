@@ -22,6 +22,7 @@ dependencies = [
     "rpyc>=4.1,<5",
     "Pillow>=10.0",
     "scikit-image>=0.22",
+    "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
