@@ -4,6 +4,16 @@ Loaded via $HOUDINI_USER_PREF_DIR/scripts/456.py (runs after scene load).
 Starts an RPyC classic server so the external MCP Server can connect
 and control Houdini via conn.modules.hou.
 
+This script ONLY starts the RPyC listener. It does NOT register sessions
+or start an MCP server. Session registration happens lazily when an MCP
+server (Claude's) actually connects via RPyC.
+
+Behavior is controlled by environment variables and config:
+  - HOUDINI_MCP_ENABLED: "1" to start RPyC, "0" to skip.
+    If unset, reads ~/houdini_mcp/config.json (human_launch.auto_start_rpyc).
+  - HOUDINI_MCP_PORT: specific port number, or "auto" for dynamic allocation.
+    If unset, defaults to "auto".
+
 Also installs persistent event monitoring callbacks that record:
   - Node creation / deletion (all contexts: /obj, /stage, /out, /mat, ...)
   - Parameter changes (name + new value)
@@ -20,15 +30,20 @@ and can be read via the get_event_log MCP tool.
 Source of truth — do NOT edit copies in Houdini prefs directory.
 """
 
+import datetime
+import json
 import os
 import socket
 import sys
-import datetime
 from pathlib import Path
 
-PORT = 18811
-# Log to ~/houdini_mcp/ — always writable, independent of project location
-LOG_FILE = Path.home() / "houdini_mcp" / "houdini_startup.log"
+# Paths
+MCP_HOME = Path.home() / "houdini_mcp"
+CONFIG_FILE = MCP_HOME / "config.json"
+LOG_FILE = MCP_HOME / "houdini_startup.log"
+
+# Default port range (must match houdini_mcp/config.py defaults)
+_DEFAULT_PORT_RANGE = (18811, 18899)
 
 
 def _log(msg):
@@ -43,28 +58,114 @@ def _log(msg):
         pass
 
 
+def _load_config():
+    """Load config from ~/houdini_mcp/config.json, return dict or empty."""
+    try:
+        if CONFIG_FILE.exists():
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        _log(f"Failed to read config: {e}")
+    return {}
+
+
+def _get_port_range(config):
+    """Get port range from config, with defaults."""
+    pr = config.get("port_range", list(_DEFAULT_PORT_RANGE))
+    try:
+        return (int(pr[0]), int(pr[1]))
+    except (IndexError, TypeError, ValueError):
+        return _DEFAULT_PORT_RANGE
+
+
 def _is_port_in_use(port):
-    """Check if the RPyC port is already in use."""
+    """Check if a TCP port is already in use."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
         return s.connect_ex(("localhost", port)) == 0
+
+
+def _find_free_port(config):
+    """Find the next available port in the configured range."""
+    min_port, max_port = _get_port_range(config)
+
+    # Read existing sessions to avoid their ports
+    sessions_dir = MCP_HOME / "sessions"
+    used_ports = set()
+    try:
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        for f in sessions_dir.glob("*.json"):
+            try:
+                info = json.loads(f.read_text(encoding="utf-8"))
+                if "port" in info:
+                    used_ports.add(int(info["port"]))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    for port in range(min_port, max_port + 1):
+        if port in used_ports:
+            continue
+        if not _is_port_in_use(port):
+            return port
+
+    raise RuntimeError(f"No available ports in range {min_port}-{max_port}")
+
+
+def _should_start(config):
+    """Determine whether to start RPyC based on env vars and config.
+
+    Priority:
+      1. HOUDINI_MCP_ENABLED env var ("1" → yes, "0" → no)
+      2. Config: human_launch.auto_start_rpyc (default: False)
+    """
+    env_enabled = os.environ.get("HOUDINI_MCP_ENABLED")
+    if env_enabled is not None:
+        return env_enabled.strip() == "1"
+    # No env var — check config (default: human launch does NOT start)
+    return config.get("human_launch", {}).get("auto_start_rpyc", False)
+
+
+def _resolve_port(config):
+    """Determine which port to use.
+
+    Priority:
+      1. HOUDINI_MCP_PORT env var (numeric → use that port, "auto" → find free)
+      2. Default: auto-find free port
+    """
+    env_port = os.environ.get("HOUDINI_MCP_PORT", "").strip()
+    if env_port and env_port != "auto":
+        try:
+            return int(env_port)
+        except ValueError:
+            _log(f"Invalid HOUDINI_MCP_PORT '{env_port}', falling back to auto")
+    return _find_free_port(config)
+
 
 
 def start_rpyc_server():
     """Start the RPyC server for MCP communication."""
     _log(f"Startup script executing (Python {sys.version})")
 
-    if _is_port_in_use(PORT):
-        _log(f"RPyC port {PORT} already in use, skipping.")
+    config = _load_config()
+
+    if not _should_start(config):
+        _log("MCP RPyC server disabled (HOUDINI_MCP_ENABLED=0 or config)")
+        return
+
+    port = _resolve_port(config)
+
+    if _is_port_in_use(port):
+        _log(f"RPyC port {port} already in use, skipping.")
         return
 
     try:
         import hrpyc
         _log(f"hrpyc module found: {hrpyc.__file__}")
-        hrpyc.start_server(port=PORT)
-        _log(f"RPyC server started on port {PORT}")
+        hrpyc.start_server(port=port)
+        _log(f"RPyC server started on port {port}")
     except ImportError as e:
         _log(f"hrpyc not available: {e}")
-        # Fallback: try rpyc directly
         try:
             import rpyc
             from rpyc.utils.server import ThreadedServer
@@ -72,17 +173,26 @@ def start_rpyc_server():
             server = ThreadedServer(
                 SlaveService,
                 hostname="localhost",
-                port=PORT,
+                port=port,
                 reuse_addr=True,
             )
             import threading
             t = threading.Thread(target=server.start, daemon=True)
             t.start()
-            _log(f"RPyC server started via rpyc fallback on port {PORT}")
+            _log(f"RPyC server started via rpyc fallback on port {port}")
         except Exception as e2:
             _log(f"Both hrpyc and rpyc fallback failed: {e2}")
+            return
     except Exception as e:
         _log(f"Failed to start RPyC server: {e}")
+        return
+
+    # Store port on hou.session for MCP tools to read when they connect
+    try:
+        import hou
+        hou.session._mcp_port = port
+    except Exception:
+        pass
 
 
 def install_event_monitoring():
@@ -248,12 +358,29 @@ def install_event_monitoring():
         _log(f"Event monitoring install failed (non-fatal): {e}")
 
 
-try:
-    start_rpyc_server()
-except Exception as e:
-    _log(f"Startup error (non-fatal): {e}")
+# Guard: only run once per Houdini session (prevents double execution
+# if old copies of 123.py/pythonrc.py still exist alongside the new hook)
+import builtins as _builtins
+if not getattr(_builtins, "_houdini_mcp_started", False):
+    _builtins._houdini_mcp_started = True
 
-try:
-    install_event_monitoring()
-except Exception as e:
-    _log(f"Event monitoring error (non-fatal): {e}")
+    try:
+        start_rpyc_server()
+    except Exception as e:
+        _log(f"Startup error (non-fatal): {e}")
+
+    # Delay event monitoring until UI is ready.
+    # 456.py runs before desktops/viewers are available, so we defer
+    # via hdefereval which executes on the next UI idle tick.
+    try:
+        import hdefereval
+        hdefereval.executeDeferred(install_event_monitoring)
+        _log("Event monitoring deferred until UI is ready")
+    except ImportError:
+        # hdefereval not available (e.g. hython CLI) — try directly
+        try:
+            install_event_monitoring()
+        except Exception as e:
+            _log(f"Event monitoring error (non-fatal): {e}")
+else:
+    _log("Startup script already executed this session, skipping.")

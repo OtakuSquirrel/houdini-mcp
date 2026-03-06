@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Houdini MCP Manager</title>
+  <style>
+    :root {
+      --bg: #1a1a1a;
+      --surface: #262626;
+      --surface2: #333333;
+      --surface3: #3d3d3d;
+      --accent: #ff6600;
+      --accent-hover: #e55b00;
+      --accent-dim: #ba4f25;
+      --accent-glow: rgba(255, 102, 0, 0.15);
+      --gold: #fdc451;
+      --text: #cccccc;
+      --text-dim: #808080;
+      --text-bright: #e6e6e6;
+      --success: #4caf50;
+      --error: #e53935;
+      --border: #333333;
+      --code-bg: #1a1a1a;
+      --code-text: #f7956a;
+      --claude: #D97757;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* Header */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .logo { color: var(--accent); font-weight: 700; font-size: 15px; letter-spacing: -0.3px; }
+    .logo span { color: var(--text-dim); font-weight: 400; }
+    nav { display: flex; gap: 2px; margin-left: 24px; }
+    nav a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 12px 14px;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    nav a:hover { color: var(--text); }
+    nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .spacer { flex: 1; }
+    .health-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+    .health-dot.offline { background: var(--error); }
+
+    /* Layout */
+    .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 8px; }
+
+    /* Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+    .two-col .card { margin-bottom: 0; position: relative; overflow: hidden; }
+
+    /* Scan fill: solid block with soft leading edge, sweeps once then holds */
+    .two-col .card::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 200%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 2;
+      opacity: 0;
+    }
+    .two-col .card.scanning::after {
+      background: linear-gradient(90deg,
+        rgba(255, 102, 0, 0.09) 0%,
+        rgba(255, 102, 0, 0.09) 88%,
+        rgba(255, 102, 0, 0.02) 96%,
+        transparent 100%
+      );
+      opacity: 1;
+      animation: scan-fill 2.5s ease-out forwards;
+    }
+    .two-col .card.scan-done::after {
+      width: 100%;
+      inset: 0;
+      background: rgba(255, 102, 0, 0.09);
+      opacity: 1;
+      animation: scan-settle 0.4s ease-out forwards;
+    }
+    @keyframes scan-fill {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(0%); }
+    }
+    @keyframes scan-settle {
+      0%   { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-title .icon { width: 16px; height: 16px; }
+    .card-body { padding: 0; }
+    .card-actions { display: flex; gap: 6px; align-items: center; }
+
+    /* Buttons */
+    .btn {
+      padding: 5px 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      color: white;
+      transition: background 0.15s;
+    }
+    .btn-accent { background: var(--accent); }
+    .btn-accent:hover { background: var(--accent-hover); }
+    .btn-ghost {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+    .btn-ghost:hover { border-color: var(--text-dim); color: var(--text); }
+
+    /* Instance entries */
+    .instance-list {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .instance-entry {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+    .instance-entry:last-child { border-bottom: none; }
+    .instance-entry.highlight { background: var(--accent-glow); }
+
+    .entry-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .entry-icon { width: 18px; height: 18px; flex-shrink: 0; }
+    .entry-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-bright);
+    }
+    .entry-status {
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      margin-left: 4px;
+      flex-shrink: 0;
+    }
+    .entry-status.connected { background: var(--success); }
+    .entry-status.waiting { background: var(--text-dim); }
+
+    .entry-meta {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      margin-bottom: 8px;
+    }
+
+    .entry-cmd {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 5px 10px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 11px;
+      color: var(--code-text);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+    .entry-cmd:hover { border-color: var(--accent-dim); background: var(--surface2); }
+
+    /* MCP session list */
+    .session-list-inner {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      margin-top: 6px;
+    }
+    .session-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .session-item:hover { background: var(--surface3); color: var(--text); }
+    .session-item.highlight { background: var(--accent-glow); color: var(--text-bright); }
+    .session-item .arrow { color: var(--accent); font-size: 10px; }
+    .session-item .sid {
+      font-size: 10px;
+      color: var(--text-dim);
+      opacity: 0.6;
+      margin-left: auto;
+    }
+
+    .session-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      margin-top: 8px;
+      margin-bottom: 2px;
+      font-weight: 600;
+    }
+
+    /* Summary */
+    .summary-bar { font-size: 11px; color: var(--text-dim); }
+
+    .empty-state { text-align: center; padding: 24px; color: var(--text-dim); font-size: 13px; }
+
+    /* Card footer (manual RPyC command) */
+    .card-footer {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .card-footer .footer-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    .card-footer .footer-cmd {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 5px 10px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 11px;
+      color: var(--code-text);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+    .card-footer .footer-cmd:hover { border-color: var(--accent-dim); background: var(--surface2); }
+
+    /* Action bar (between two-col and processes) */
+    .action-bar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .action-bar .stats {
+      font-size: 12px;
+      color: var(--text-dim);
+      display: flex;
+      gap: 16px;
+    }
+    .action-bar .stats span { white-space: nowrap; }
+    .action-bar .spacer { flex: 1; }
+
+    /* Processes table */
+    .proc-table { width: 100%; border-collapse: collapse; }
+    .proc-table th {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      font-weight: 600;
+      text-align: left;
+      padding: 6px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .proc-table td {
+      font-size: 12px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .proc-table td:first-child {
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 11px;
+    }
+    .proc-table tr:last-child td { border-bottom: none; }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 20px; right: 20px;
+      background: var(--surface2);
+      border: 1px solid var(--accent-dim);
+      border-radius: 6px;
+      padding: 10px 18px;
+      font-size: 13px;
+      color: var(--text-bright);
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 100;
+    }
+    .toast.show { opacity: 1; }
+
+  </style>
+</head>
+<body>
+  <header>
+    <span class="logo">Houdini MCP <span>Manager</span></span>
+    <nav>
+      <a href="/" class="active">Dashboard</a>
+      <a href="/config">HouConfig</a>
+      <a href="/agent-config">AgentConfig</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="health-dot" id="health-dot"></div>
+  </header>
+
+  <div class="container">
+    <!-- Two-column: Houdini RPyC | MCP Servers -->
+    <div class="two-col">
+      <!-- Houdini RPyC -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">
+            <img src="/static/icons/ico_houdini.svg" class="icon" alt="">
+            Houdini RPyC
+          </span>
+          <span class="summary-bar" id="hou-summary"></span>
+        </div>
+        <div class="card-body">
+          <div class="instance-list" id="hou-list">
+            <div class="empty-state">Click Scan to discover</div>
+          </div>
+        </div>
+        <div class="card-footer" id="hou-manual">
+          <div class="footer-label">Manual Start RPyC</div>
+          <div class="footer-cmd" id="hou-manual-cmd"
+               onclick="copyText(this.textContent.trim())"
+               title="Click to copy — paste into Houdini Python Shell">import hrpyc; hrpyc.start_server()</div>
+        </div>
+      </div>
+
+      <!-- MCP Servers -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">
+            <img src="/static/icons/claude-color.svg" class="icon" alt="">
+            MCP Servers
+          </span>
+          <span class="summary-bar" id="mcp-summary"></span>
+        </div>
+        <div class="card-body">
+          <div class="instance-list" id="mcp-list">
+            <div class="empty-state">Click Scan to discover</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action bar -->
+    <div class="action-bar">
+      <div class="stats" id="scan-stats">
+        <span id="stat-free"></span>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn btn-accent" onclick="loadDashboard()">Scan</button>
+    </div>
+
+    <!-- Houdini Processes (real-time) -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Houdini Processes</span>
+        <div class="card-actions">
+          <button class="btn btn-ghost" onclick="loadProcesses()">Refresh</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <table class="proc-table">
+          <thead><tr><th>Name</th><th>PID</th><th>Memory</th></tr></thead>
+          <tbody id="proc-body">
+            <tr><td colspan="3" class="empty-state">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API = '';
+    const ICO_HOU = '/static/icons/ico_houdini.svg';
+    const ICO_CLAUDE = '/static/icons/claude-color.svg';
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(API + path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+      });
+      return res.json();
+    }
+
+    function copyText(text) {
+      navigator.clipboard.writeText(text).then(() => showToast('Copied'));
+    }
+
+    // ── Highlight interaction (bidirectional) ──
+    function highlightPort(port) {
+      const p = String(port);
+      // Highlight Houdini entries by data-port
+      document.querySelectorAll('.instance-entry[data-port]').forEach(el => {
+        el.classList.toggle('highlight', el.dataset.port === p);
+      });
+      // Highlight MCP session items by data-port
+      document.querySelectorAll('.session-item[data-port]').forEach(el => {
+        el.classList.toggle('highlight', el.dataset.port === p);
+      });
+    }
+    function clearHighlight() {
+      document.querySelectorAll('.highlight').forEach(el => el.classList.remove('highlight'));
+    }
+
+    // ── Height animation helpers ──
+    function lockHeight(el) {
+      el.style.height = el.offsetHeight + 'px';
+    }
+    function animateToContent(el) {
+      // Temporarily disable transition to measure natural height
+      el.style.transition = 'none';
+      el.style.height = 'auto';
+      const targetH = el.offsetHeight;
+      // Restore locked height (no transition yet)
+      el.style.height = el.dataset.lockedH + 'px';
+      // Force reflow so browser registers the starting height
+      el.offsetHeight;
+      // Re-enable transition and animate to target
+      el.style.transition = '';
+      el.style.height = targetH + 'px';
+      // After transition ends, remove fixed height so it's responsive
+      const onEnd = () => { el.style.height = ''; el.removeEventListener('transitionend', onEnd); };
+      el.addEventListener('transitionend', onEnd);
+    }
+
+    // ── Scan card animation helpers ──
+    function getScanCards() {
+      return document.querySelectorAll('.two-col .card');
+    }
+    function startScanAnim() {
+      getScanCards().forEach(c => { c.classList.remove('scan-done'); c.classList.add('scanning'); });
+    }
+    function stopScanAnim() {
+      getScanCards().forEach(c => {
+        c.classList.remove('scanning');
+        c.classList.add('scan-done');
+      });
+      // Remove scan-done after the fade-out animation completes
+      setTimeout(() => getScanCards().forEach(c => c.classList.remove('scan-done')), 650);
+    }
+
+    // ── Dashboard ──
+    let _scanning = false;
+    async function loadDashboard() {
+      if (_scanning) return;
+      _scanning = true;
+
+      const houList = document.getElementById('hou-list');
+      const mcpList = document.getElementById('mcp-list');
+
+      // Lock current heights before scan
+      lockHeight(houList);
+      lockHeight(mcpList);
+      houList.dataset.lockedH = houList.offsetHeight;
+      mcpList.dataset.lockedH = mcpList.offsetHeight;
+
+      // Start sweep animation on both cards
+      startScanAnim();
+
+      try {
+        // Cleanup stale sessions first, then scan
+        await api('/api/sessions/cleanup', { method: 'POST' });
+        const data = await api('/api/sessions/dashboard');
+
+        // Stop sweep → settle glow → fade out
+        stopScanAnim();
+
+        // ── Houdini instances ──
+        const houSummary = document.getElementById('hou-summary');
+
+        // Update action bar stats (always, regardless of instance count)
+        document.getElementById('stat-free').textContent = `${data.free_count} free ports`;
+        if (data.next_free_port) {
+          document.getElementById('stat-free').textContent += ` (next: ${data.next_free_port})`;
+        }
+
+        // Update manual RPyC command with next free port
+        const manualCmd = document.getElementById('hou-manual-cmd');
+        if (data.next_free_port) {
+          manualCmd.textContent = `import hrpyc; hrpyc.start_server(port=${data.next_free_port})`;
+        } else {
+          manualCmd.textContent = 'import hrpyc; hrpyc.start_server()';
+        }
+
+        if (!data.houdini_instances || data.houdini_instances.length === 0) {
+          houList.innerHTML = '<div class="empty-state">No Houdini RPyC listeners found</div>';
+          houSummary.textContent = '0 instances';
+        } else {
+          const connected = data.houdini_instances.filter(h => h.connected_mcp_pids.length > 0).length;
+          const waiting = data.houdini_instances.length - connected;
+          const parts = [];
+          if (connected) parts.push(`${connected} connected`);
+          if (waiting) parts.push(`${waiting} waiting`);
+          houSummary.textContent = parts.join(' / ');
+
+          houList.innerHTML = data.houdini_instances.map(h => {
+            const hasConn = h.connected_mcp_pids.length > 0;
+            const statusDot = hasConn
+              ? '<span class="entry-status connected" title="MCP connected"></span>'
+              : '<span class="entry-status waiting" title="Waiting for MCP"></span>';
+            const name = h.version ? `Houdini ${h.version}` : 'Houdini';
+            const pid = h.pid ? `PID ${h.pid}` : 'PID ?';
+            const cmd = `Connect to Houdini (PID ${h.pid || '?'}, port ${h.port})`;
+            return `
+              <div class="instance-entry" data-port="${h.port}"
+                   onmouseenter="highlightPort(${h.port})"
+                   onmouseleave="clearHighlight()">
+                <div class="entry-header">
+                  <img src="${ICO_HOU}" class="entry-icon" alt="">
+                  <span class="entry-name">${name}</span>
+                  ${statusDot}
+                </div>
+                <div class="entry-meta">${pid} &middot; Port ${h.port}</div>
+                <div class="entry-cmd" onclick="copyText('${cmd}')">${cmd}</div>
+              </div>`;
+          }).join('');
+        }
+
+        // ── MCP Servers ──
+        const mcpSummary = document.getElementById('mcp-summary');
+
+        if (!data.mcp_servers || data.mcp_servers.length === 0) {
+          mcpList.innerHTML = '<div class="empty-state">No active MCP servers</div>';
+          mcpSummary.textContent = '';
+        } else {
+          const totalSessions = data.mcp_servers.reduce((sum, m) => sum + m.sessions.length, 0);
+          mcpSummary.textContent = `${data.mcp_servers.length} server${data.mcp_servers.length > 1 ? 's' : ''} / ${totalSessions} session${totalSessions > 1 ? 's' : ''}`;
+
+          mcpList.innerHTML = data.mcp_servers.map(m => {
+            const icon = m.client_name.toLowerCase().includes('claude') ? ICO_CLAUDE : ICO_CLAUDE;
+            const sessionItems = m.sessions.map(s => {
+              const hpid = s.houdini_pid ? `PID ${s.houdini_pid}` : '?';
+              const copyStr = `Connect to Houdini (PID ${s.houdini_pid || '?'}, port ${s.port})`;
+              return `
+                <div class="session-item" data-port="${s.port}"
+                     onmouseenter="highlightPort(${s.port})"
+                     onmouseleave="clearHighlight()"
+                     onclick="copyText('${copyStr}')"
+                     title="Click to copy">
+                  <span class="arrow">&rarr;</span>
+                  ${hpid} : ${s.port}
+                  <span class="sid">${s.session_id || ''}</span>
+                </div>`;
+            }).join('');
+
+            return `
+              <div class="instance-entry" data-mcp-pid="${m.mcp_pid}">
+                <div class="entry-header">
+                  <img src="${icon}" class="entry-icon" alt="">
+                  <span class="entry-name">${m.client_name}</span>
+                </div>
+                <div class="entry-meta">PID ${m.mcp_pid}</div>
+                <div class="session-label">Sessions</div>
+                <div class="session-list-inner">
+                  ${sessionItems || '<span style="color:var(--text-dim);font-size:11px;">No sessions</span>'}
+                </div>
+              </div>`;
+          }).join('');
+        }
+
+        // Animate both lists to new height
+        animateToContent(houList);
+        animateToContent(mcpList);
+
+      } catch (err) {
+        stopScanAnim();
+        houList.innerHTML = '<div class="empty-state" style="color:var(--error);">Scan failed</div>';
+        mcpList.innerHTML = '<div class="empty-state" style="color:var(--error);">Scan failed</div>';
+        animateToContent(houList);
+        animateToContent(mcpList);
+        console.error(err);
+      } finally {
+        _scanning = false;
+      }
+    }
+
+    // ── Houdini Processes ──
+    async function loadProcesses() {
+      const data = await api('/api/houdini/processes');
+      const tbody = document.getElementById('proc-body');
+      if (!data.processes || data.processes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No Houdini processes running</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.processes.map(p => `
+        <tr><td>${p.name}</td><td>${p.pid}</td><td>${p.mem}</td></tr>
+      `).join('');
+    }
+
+    // ── Health ──
+    async function checkHealth() {
+      try {
+        const data = await api('/health');
+        document.getElementById('health-dot').classList.toggle('offline', data.status !== 'ok');
+      } catch { document.getElementById('health-dot').classList.add('offline'); }
+    }
+
+    // ── Init ──
+    checkHealth();
+    loadDashboard();
+    loadProcesses();
+    setInterval(() => { checkHealth(); loadProcesses(); }, 10000);
+  </script>
+</body>
+</html>

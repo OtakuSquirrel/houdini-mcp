@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Config - Houdini MCP</title>
+  <style>
+    :root {
+      --bg: #1a1a1a;
+      --surface: #262626;
+      --surface2: #333333;
+      --surface3: #3d3d3d;
+      --accent: #ff6600;
+      --accent-hover: #e55b00;
+      --accent-dim: #ba4f25;
+      --accent-glow: rgba(255, 102, 0, 0.15);
+      --text: #cccccc;
+      --text-dim: #808080;
+      --text-bright: #e6e6e6;
+      --success: #4caf50;
+      --error: #e53935;
+      --border: #333333;
+      --code-bg: #1a1a1a;
+      --code-text: #f7956a;
+      --claude: #D97757;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .logo { color: var(--accent); font-weight: 700; font-size: 15px; letter-spacing: -0.3px; }
+    .logo span { color: var(--text-dim); font-weight: 400; }
+    nav { display: flex; gap: 2px; margin-left: 24px; }
+    nav a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 12px 14px;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    nav a:hover { color: var(--text); }
+    nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .spacer { flex: 1; }
+    .health-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+    .health-dot.offline { background: var(--error); }
+
+    .container { max-width: 900px; margin: 0 auto; padding: 24px; }
+
+    /* Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-title .icon { width: 16px; height: 16px; }
+    .card-body { padding: 16px; }
+
+    /* Buttons */
+    .btn {
+      padding: 5px 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      color: white;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .btn-accent { background: var(--accent); }
+    .btn-accent:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-ghost {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+    .btn-ghost:hover:not(:disabled) { border-color: var(--text-dim); color: var(--text); }
+    .btn-danger { background: none; border: 1px solid var(--error); color: var(--error); }
+    .btn-danger:hover:not(:disabled) { background: var(--error); color: #fff; }
+
+    /* Section within card */
+    .scope-section {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .scope-section:last-child { border-bottom: none; }
+
+    .scope-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .scope-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-bright);
+    }
+    .scope-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .scope-badge.installed { background: #1b3a1b; color: var(--success); border: 1px solid #2d5a2d; }
+    .scope-badge.not-installed { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
+    .scope-badge.outdated { background: #3a351b; color: #f9a825; border: 1px solid #5a4d2d; }
+
+    /* Config path line */
+    .config-path {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      margin-bottom: 10px;
+      word-break: break-all;
+    }
+
+    /* JSON preview block */
+    .json-block {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 11px;
+      color: var(--code-text);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      white-space: pre;
+      line-height: 1.5;
+      overflow-x: auto;
+      margin-bottom: 10px;
+    }
+    .json-block:hover { border-color: var(--accent-dim); background: var(--surface2); }
+    .json-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    /* Action row */
+    .action-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* Note */
+    .scope-note {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 10px;
+      line-height: 1.5;
+    }
+
+    /* Project path input */
+    .project-input-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .project-input-row input {
+      flex: 1;
+      padding: 6px 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-size: 12px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+    .project-input-row input:focus { border-color: var(--accent-dim); outline: none; }
+    .project-input-row input::placeholder { color: var(--text-dim); }
+
+    /* Project result area */
+    .project-result { display: none; }
+    .project-result.visible { display: block; }
+
+    /* Empty / coming-soon */
+    .coming-soon {
+      text-align: center;
+      padding: 32px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    .coming-soon .title {
+      font-size: 14px;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .empty-state { text-align: center; padding: 24px; color: var(--text-dim); font-size: 13px; }
+
+    .toast {
+      position: fixed;
+      bottom: 20px; right: 20px;
+      background: var(--surface2);
+      border: 1px solid var(--accent-dim);
+      border-radius: 6px;
+      padding: 10px 18px;
+      font-size: 13px;
+      color: var(--text-bright);
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 100;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="logo">Houdini MCP <span>Manager</span></span>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/config">HouConfig</a>
+      <a href="/agent-config" class="active">AgentConfig</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="health-dot" id="health-dot"></div>
+  </header>
+
+  <div class="container">
+
+    <!-- Claude Code -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">
+          <img src="/static/icons/claude-color.svg" class="icon" alt="">
+          Claude Code
+        </span>
+      </div>
+
+      <!-- Global scope -->
+      <div class="scope-section" id="global-section">
+        <div class="scope-header">
+          <span class="scope-label">Global</span>
+          <span class="scope-badge not-installed" id="global-badge">Loading</span>
+        </div>
+        <div id="global-body">
+          <div class="empty-state">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Project scope -->
+      <div class="scope-section" id="project-section">
+        <div class="scope-header">
+          <span class="scope-label">Project</span>
+          <span class="scope-badge not-installed" id="project-badge" style="display:none;"></span>
+        </div>
+        <div class="project-input-row">
+          <input type="text" id="project-path" placeholder="Enter project path, e.g. D:\projects\my-project">
+          <button class="btn btn-ghost" onclick="checkProject()">Check</button>
+        </div>
+        <div class="project-result" id="project-result"></div>
+      </div>
+    </div>
+
+    <!-- More agents -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">More Agents</span>
+      </div>
+      <div class="card-body">
+        <div class="coming-soon">
+          <div class="title">Coming Soon</div>
+          Cursor, Windsurf, and other MCP-compatible agents will be supported here.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+      });
+      return res.json();
+    }
+
+    function copyText(text) {
+      navigator.clipboard.writeText(text).then(() => showToast('Copied'));
+    }
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    /** Format an entry as pretty JSON for display */
+    function entryJson(entry) {
+      const inner = JSON.stringify(entry, null, 2)
+        .split('\n')
+        .map((line, i) => i === 0 ? line : '  ' + line)
+        .join('\n');
+      return `"houdini": ${inner}`;
+    }
+
+    // ── Global ──
+    async function loadGlobal() {
+      try {
+        const data = await api('/api/agents/claude/global/status');
+        renderGlobal(data);
+      } catch (err) {
+        document.getElementById('global-body').innerHTML =
+          '<div class="empty-state" style="color:var(--error);">Failed to load</div>';
+        console.error(err);
+      }
+    }
+
+    function renderGlobal(data) {
+      const badge = document.getElementById('global-badge');
+      const body = document.getElementById('global-body');
+
+      let badgeClass, badgeText;
+      if (data.installed && data.up_to_date) {
+        badgeClass = 'installed'; badgeText = 'Installed';
+      } else if (data.installed) {
+        badgeClass = 'outdated'; badgeText = 'Outdated';
+      } else {
+        badgeClass = 'not-installed'; badgeText = 'Not Installed';
+      }
+      badge.className = 'scope-badge ' + badgeClass;
+      badge.textContent = badgeText;
+
+      const configPath = data.config_path || '~/.claude.json';
+      const expectedJson = entryJson(data.expected_entry || {});
+
+      let currentBlock = '';
+      if (data.installed && data.current_entry) {
+        const currentJson = entryJson(data.current_entry);
+        currentBlock = `
+          <div class="json-label">Current</div>
+          <div class="json-block" onclick="copyText(this.textContent)" title="Click to copy">${esc(currentJson)}</div>`;
+      }
+
+      let actionBtns;
+      if (!data.installed) {
+        actionBtns = `<button class="btn btn-accent" onclick="installGlobal()">Install</button>`;
+      } else if (!data.up_to_date) {
+        actionBtns = `
+          <button class="btn btn-accent" onclick="installGlobal()">Update</button>
+          <button class="btn btn-danger" onclick="uninstallGlobal()">Uninstall</button>`;
+      } else {
+        actionBtns = `<button class="btn btn-danger" onclick="uninstallGlobal()">Uninstall</button>`;
+      }
+
+      body.innerHTML = `
+        <div class="config-path">${esc(configPath)}</div>
+        ${currentBlock}
+        <div class="json-label">Will Write</div>
+        <div class="json-block" onclick="copyText(this.textContent)" title="Click to copy">${esc(expectedJson)}</div>
+        <div class="action-row">${actionBtns}</div>
+        <div class="scope-note">Applies to all projects. After moving HoudiniMCP to a different location, click Install again to update the path.</div>
+      `;
+    }
+
+    async function installGlobal() {
+      try {
+        await api('/api/agents/claude/global/install', { method: 'POST' });
+        showToast('Global: installed');
+        loadGlobal();
+      } catch { showToast('Install failed'); }
+    }
+
+    async function uninstallGlobal() {
+      try {
+        await api('/api/agents/claude/global/uninstall', { method: 'POST' });
+        showToast('Global: uninstalled');
+        loadGlobal();
+      } catch { showToast('Uninstall failed'); }
+    }
+
+    // ── Project ──
+    let _lastProjectPath = '';
+
+    async function checkProject() {
+      const input = document.getElementById('project-path');
+      const p = input.value.trim();
+      if (!p) { showToast('Enter a project path'); return; }
+
+      _lastProjectPath = p;
+      const badge = document.getElementById('project-badge');
+      const result = document.getElementById('project-result');
+
+      try {
+        const data = await api('/api/agents/claude/project/status', {
+          method: 'POST',
+          body: JSON.stringify({ path: p }),
+        });
+        badge.style.display = '';
+        result.classList.add('visible');
+        renderProject(data);
+      } catch (err) {
+        badge.style.display = 'none';
+        result.classList.add('visible');
+        result.innerHTML = '<div class="empty-state" style="color:var(--error);">Invalid path or check failed</div>';
+        console.error(err);
+      }
+    }
+
+    function renderProject(data) {
+      const badge = document.getElementById('project-badge');
+      const result = document.getElementById('project-result');
+
+      let badgeClass, badgeText;
+      if (data.installed && data.up_to_date) {
+        badgeClass = 'installed'; badgeText = 'Installed';
+      } else if (data.installed) {
+        badgeClass = 'outdated'; badgeText = 'Outdated';
+      } else {
+        badgeClass = 'not-installed'; badgeText = 'Not Installed';
+      }
+      badge.className = 'scope-badge ' + badgeClass;
+      badge.textContent = badgeText;
+
+      const configPath = data.config_path || '.mcp.json';
+      const expectedJson = entryJson(data.expected_entry || {});
+
+      let currentBlock = '';
+      if (data.installed && data.current_entry) {
+        const currentJson = entryJson(data.current_entry);
+        currentBlock = `
+          <div class="json-label">Current</div>
+          <div class="json-block" onclick="copyText(this.textContent)" title="Click to copy">${esc(currentJson)}</div>`;
+      }
+
+      let actionBtns;
+      if (!data.installed) {
+        actionBtns = `<button class="btn btn-accent" onclick="installProject()">Install</button>`;
+      } else if (!data.up_to_date) {
+        actionBtns = `
+          <button class="btn btn-accent" onclick="installProject()">Update</button>
+          <button class="btn btn-danger" onclick="uninstallProject()">Uninstall</button>`;
+      } else {
+        actionBtns = `<button class="btn btn-danger" onclick="uninstallProject()">Uninstall</button>`;
+      }
+
+      result.innerHTML = `
+        <div class="config-path">${esc(configPath)}</div>
+        ${currentBlock}
+        <div class="json-label">Will Write</div>
+        <div class="json-block" onclick="copyText(this.textContent)" title="Click to copy">${esc(expectedJson)}</div>
+        <div class="action-row">${actionBtns}</div>
+      `;
+    }
+
+    async function installProject() {
+      if (!_lastProjectPath) return;
+      try {
+        await api('/api/agents/claude/project/install', {
+          method: 'POST',
+          body: JSON.stringify({ path: _lastProjectPath }),
+        });
+        showToast('Project: installed');
+        checkProject();
+      } catch { showToast('Install failed'); }
+    }
+
+    async function uninstallProject() {
+      if (!_lastProjectPath) return;
+      try {
+        await api('/api/agents/claude/project/uninstall', {
+          method: 'POST',
+          body: JSON.stringify({ path: _lastProjectPath }),
+        });
+        showToast('Project: uninstalled');
+        checkProject();
+      } catch { showToast('Uninstall failed'); }
+    }
+
+    // ── Health ──
+    async function checkHealth() {
+      try {
+        const data = await api('/health');
+        document.getElementById('health-dot').classList.toggle('offline', data.status !== 'ok');
+      } catch { document.getElementById('health-dot').classList.add('offline'); }
+    }
+
+    // ── Init ──
+    checkHealth();
+    loadGlobal();
+    setInterval(checkHealth, 10000);
+  </script>
+</body>
+</html>

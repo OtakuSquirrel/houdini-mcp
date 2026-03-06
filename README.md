@@ -4,24 +4,39 @@ MCP (Model Context Protocol) server for SideFX Houdini. Enables AI assistants
 (Claude Code, etc.) to control Houdini via RPyC — creating nodes, setting parameters,
 running Python in Houdini's context, capturing viewport screenshots, and more.
 
+Supports **multi-instance**: multiple Houdini sessions on different ports, each
+controlled by an independent MCP server. Includes a **WebUI** management dashboard
+for configuration, session discovery, and startup script management.
+
 ## Architecture
 
 ```
-Claude Code / AI Assistant
-         |
-    MCP (stdio)
-         |
-  houdini-mcp server
-  (Python 3.11+, external process)
-         |
-   RPyC port 18811
-         |
-   Houdini (hrpyc, embedded Python 3.10/3.11)
+┌──────────────────────────────────────────────────┐
+│          WebUI Backend (Python/FastAPI)           │
+│  Config mgmt | Session discovery | Port monitor  │
+└────────────────────┬─────────────────────────────┘
+                     │ reads/writes
+              ┌──────┴──────┐
+              │ Config Store │  ~/houdini_mcp/
+              │ config.json  │  sessions/*.json
+              └──────┬──────┘
+        ┌────────────┼────────────┐
+        ▼            ▼            ▼
+  ┌──────────┐ ┌──────────┐ ┌──────────┐
+  │ MCP Srv A│ │ MCP Srv B│ │ MCP Srv C│  (independent)
+  │ port 18811│ │ port 18812│ │ port 18813│
+  │ Houdini A│ │ Houdini B│ │ Houdini C│
+  └──────────┘ └──────────┘ └──────────┘
 ```
 
-The MCP server runs as a separate process from Houdini. They communicate via
-RPyC over TCP (localhost:18811). The server process uses Python 3.11+; Houdini's
-embedded Python version (3.10 for H20.5, 3.11 for H21.0) is independent.
+Each MCP server is a 1:1 pair with a Houdini instance. They communicate via
+RPyC over TCP (localhost). The MCP server uses stdio transport (FastMCP) to
+talk to Claude Code / AI assistants.
+
+The MCP server starts **idle** — it does not connect to Houdini until a tool
+is actually invoked. This prevents occupying ports when the agent is working
+on unrelated tasks. Port auto-discovery scans the configured range to find
+active RPyC listeners.
 
 ## Requirements
 
@@ -43,16 +58,57 @@ python -m venv .venv
 # macOS/Linux
 # source .venv/bin/activate
 
-# Install
+# Install core
 pip install -e .
+
+# Install with WebUI support
+pip install -e ".[webui]"
 
 # Install dev dependencies (optional, for running tests)
 pip install -e ".[dev]"
 ```
 
-## Claude Code Configuration
+## How to Use
 
-Add to `.claude/settings.local.json` in your project (or copy the one in this repo):
+### MCP Server (for Claude Code / AI Agents)
+
+```bash
+# Start MCP server (default port 18811)
+.venv\Scripts\python.exe -m houdini_mcp
+
+# Start MCP server on a specific port
+.venv\Scripts\python.exe -m houdini_mcp --port 18812
+
+# Start with a named session ID
+.venv\Scripts\python.exe -m houdini_mcp --port 18812 --session-id my-session
+
+# Show all CLI options
+.venv\Scripts\python.exe -m houdini_mcp --help
+```
+
+### WebUI Management Dashboard
+
+```bash
+# Start WebUI (default: http://127.0.0.1:8765)
+.venv\Scripts\python.exe -m houdini_mcp.webui
+
+# Custom host/port
+.venv\Scripts\python.exe -m houdini_mcp.webui --host 0.0.0.0 --port 9000
+
+# Auto-reload on code changes (development)
+.venv\Scripts\python.exe -m houdini_mcp.webui --reload
+```
+
+The WebUI provides:
+- **Session list**: view all active Houdini MCP sessions, their ports and PIDs
+- **Configuration**: toggle auto-start RPyC for human/agent launches, set port range
+- **Startup scripts**: install/uninstall MCP hooks per Houdini version (non-destructive)
+- **Process monitor**: see running Houdini/hython processes
+- **Port status**: view which ports are in use or available
+
+### Claude Code Configuration
+
+Add to `.claude/settings.local.json` in your project:
 
 ```json
 {
@@ -66,49 +122,89 @@ Add to `.claude/settings.local.json` in your project (or copy the one in this re
 }
 ```
 
-Replace `/path/to/houdini-mcp` with the directory containing this README.
-The `command` should point to the venv's Python interpreter.
+For multi-instance, specify a port per agent:
 
-The MCP server communicates via **stdio** transport (FastMCP default) — no HTTP
-server or port needed for the MCP connection itself. Only the RPyC link to
-Houdini uses a TCP port (18811).
+```json
+{
+  "mcpServers": {
+    "houdini": {
+      "command": "/path/to/houdini-mcp/.venv/Scripts/python.exe",
+      "args": ["-m", "houdini_mcp", "--port", "18812"],
+      "cwd": "/path/to/houdini-mcp"
+    }
+  }
+}
+```
 
-## Quick Start
+### Quick Start (MCP Tools)
 
-### 1. Install Houdini startup scripts
-
-One-time setup. Call the `install_startup_scripts` MCP tool, which deploys
-`houdini_plugin/houdini_mcp_startup.py` to the correct Houdini prefs
-directory (auto-detected for each installed version):
+#### 1. Install startup scripts (one-time)
 
 ```
 install_startup_scripts()
-# Installs to ~/Documents/houdini21.0/scripts/{pythonrc,123,456}.py
-# and ~/Documents/houdini20.5/scripts/{pythonrc,123,456}.py (if installed)
+# Non-destructive: copies houdini_mcp_startup.py to Houdini scripts dir
+# and injects a one-line hook into 456.py (preserves existing content)
 ```
 
-Or call `start_houdini(mode="gui")` — it auto-installs if scripts are missing.
+Or use the WebUI — click "Install" next to any Houdini version.
 
-Startup log is written to `~/houdini_mcp/houdini_startup.log`.
-
-### 2. Use the tools
-
-Recommended entry point:
+#### 2. Launch and control Houdini
 
 ```
-ensure_houdini_ready()   → starts Houdini if not running, connects via RPyC
-get_scene_summary()      → overview of the current scene
+# Recommended entry point (idempotent, auto-starts if needed)
+ensure_houdini_ready()
+
+# Or start explicitly with options
+start_houdini(version="21.0", mode="gui")   # GUI mode, auto port
+start_houdini(mode="hython", port=18815)     # headless, specific port
+
+# Work with the scene
+get_scene_summary()
 create_node("/obj", "geo", "mysphere")
 set_parameter("/obj/mysphere/sphere1", "rad", 2.0)
 get_geometry_info("/obj/mysphere/sphere1")
 viewport_screenshot("/tmp/view.png")
+
+# Session management
+get_current_session()      # this MCP server's session info
+list_all_sessions()        # all sessions on this machine
+scan_ports()               # full port range status with PIDs
+disconnect_houdini()       # release connection (Houdini RPyC stays alive)
+cleanup_stale_sessions()   # remove dead sessions
+
+# Configuration (via MCP tools)
+get_mcp_config()
+update_mcp_config(human_auto_start=True)   # let human-launched Houdini start RPyC
+
+# Shutdown
+stop_houdini()
 ```
 
-## Available Tools (41 total)
+## Multi-Instance Support
+
+Each Houdini instance runs on a unique RPyC port. Ports are dynamically
+allocated from a configurable range (default: 18811–18899).
+
+**How it works**:
+- `start_houdini()` calls `allocate_port()` to find the next free port
+- Launches Houdini with env vars: `HOUDINI_MCP_ENABLED=1`, `HOUDINI_MCP_PORT=<port>`
+- The startup script reads these env vars and starts the RPyC listener
+- MCP server auto-discovers the RPyC port and connects on first tool call
+- Session is registered on connect, unregistered on disconnect or process exit
+
+**Human-launched Houdini** does NOT start RPyC by default (configurable via
+WebUI or `update_mcp_config`). Agent-launched Houdini always starts RPyC.
+
+**Disconnect without killing Houdini**: `disconnect_houdini()` releases the
+MCP connection while keeping Houdini's RPyC listener alive. Another agent
+can connect to the same Houdini later.
+
+## Available Tools (50 total)
 
 | Category | Tools | Count |
 |---|---|---|
-| **Lifecycle** | `install_startup_scripts`, `get_houdini_status`, `start_houdini`, `stop_houdini`, `ensure_houdini_ready` | 5 |
+| **Lifecycle** | `install_startup_scripts`, `uninstall_startup_scripts`, `get_houdini_status`, `start_houdini`, `stop_houdini`, `ensure_houdini_ready` | 6 |
+| **Sessions** | `list_all_sessions`, `get_current_session`, `disconnect_houdini`, `cleanup_stale_sessions`, `scan_ports`, `get_mcp_config`, `update_mcp_config` | 7 |
 | **Scene** | `new_scene`, `save_hip`, `open_hip`, `get_scene_summary` | 4 |
 | **Nodes** | `create_node`, `delete_node`, `get_node_info`, `get_node_tree`, `get_node_children` | 5 |
 | **Parameters** | `get_parameter`, `set_parameter`, `get_parm_template` | 3 |
@@ -129,26 +225,71 @@ houdini-mcp/
 │   ├── __main__.py               # Entry point: python -m houdini_mcp
 │   ├── server.py                 # FastMCP instance + global HoudiniConnection
 │   ├── connection.py             # RPyC connection manager (auto-reconnect)
+│   ├── config.py                 # Config management (~/houdini_mcp/config.json)
+│   ├── registry.py               # Session registry (~/houdini_mcp/sessions/)
 │   ├── utils.py                  # RPyC netref → native Python conversion
-│   └── tools/                    # Tool modules (each registers @mcp.tool)
-│       ├── lifecycle.py          # Start/stop/status Houdini process
-│       ├── scene.py              # New/save/open scenes
-│       ├── nodes.py              # Create/delete/inspect nodes
-│       ├── parameters.py         # Get/set node parameters
-│       ├── connections.py        # Wire/unwire node connections
-│       ├── execution.py          # Execute Python code, cook nodes
-│       ├── geometry.py           # Inspect geometry data
-│       ├── viewport.py           # Viewport screenshot, camera control
-│       ├── render.py             # ROP rendering
-│       ├── verification.py       # SSIM image comparison, scene diff
-│       ├── screen.py             # Win32 window capture
-│       └── events.py             # Scene event monitoring
+│   ├── tools/                    # Tool modules (each registers @mcp.tool)
+│   │   ├── lifecycle.py          # Start/stop/status, startup script install
+│   │   ├── sessions.py           # Session & config management tools
+│   │   ├── scene.py              # New/save/open scenes
+│   │   ├── nodes.py              # Create/delete/inspect nodes
+│   │   ├── parameters.py         # Get/set node parameters
+│   │   ├── connections.py        # Wire/unwire node connections
+│   │   ├── execution.py          # Execute Python code, cook nodes
+│   │   ├── geometry.py           # Inspect geometry data
+│   │   ├── viewport.py           # Viewport screenshot, camera control
+│   │   ├── render.py             # ROP rendering
+│   │   ├── verification.py       # SSIM image comparison, scene diff
+│   │   ├── screen.py             # Win32 window capture
+│   │   └── events.py             # Scene event monitoring
+│   └── webui/                    # WebUI management dashboard
+│       ├── __main__.py           # Entry point: python -m houdini_mcp.webui
+│       ├── app.py                # FastAPI application
+│       ├── routes/               # API route modules
+│       │   ├── config_routes.py  # Config CRUD
+│       │   ├── session_routes.py # Session discovery/management
+│       │   └── houdini_routes.py # Houdini version/process discovery
+│       └── static/               # Frontend assets
+│           ├── index.html        # Dashboard (sessions + processes)
+│           └── config.html       # Configuration page
 ├── houdini_plugin/
-│   └── houdini_mcp_startup.py    # Deployed to Houdini prefs (starts RPyC)
+│   └── houdini_mcp_startup.py    # Source of truth (deployed to Houdini prefs)
 ├── tests/                        # Integration tests
 ├── pyproject.toml                # Package config & dependencies
 └── .venv/                        # Virtual environment (not tracked)
 ```
+
+## Configuration
+
+Configuration is stored at `~/houdini_mcp/config.json`:
+
+```json
+{
+  "human_launch": {
+    "auto_start_rpyc": false
+  },
+  "agent_launch": {
+    "auto_start_rpyc": true
+  },
+  "port_range": [18811, 18899]
+}
+```
+
+- **human_launch.auto_start_rpyc**: Whether manually opened Houdini starts RPyC (default: `false`)
+- **agent_launch.auto_start_rpyc**: Whether agent-launched Houdini starts RPyC (default: `true`)
+- **port_range**: Port range for dynamic allocation (default: `18811–18899`)
+
+Edit via WebUI, MCP tool (`update_mcp_config`), or directly.
+
+## Environment Variables
+
+The startup script (`houdini_mcp_startup.py`) reads these env vars
+(set automatically by `start_houdini()`, or set manually):
+
+| Variable | Values | Default |
+|---|---|---|
+| `HOUDINI_MCP_ENABLED` | `"1"` to start RPyC, `"0"` to skip | Check config |
+| `HOUDINI_MCP_PORT` | Port number or `"auto"` | `"auto"` |
 
 ## Houdini Version Support
 
@@ -167,11 +308,25 @@ to select a specific version, or omit `version` to use the latest.
 ## How It Works
 
 Houdini ships `hrpyc` (an RPyC server wrapper bundled with Houdini). The startup
-script (`houdini_plugin/houdini_mcp_startup.py`) — deployed to
-`~/Documents/houdiniX.Y/scripts/` via `install_startup_scripts` — runs when Houdini starts
-and calls `hrpyc.start_server(port=18811)`. The MCP server connects with
-`rpyc.classic.connect("localhost", 18811)` and accesses the full `hou` module
-remotely via `conn.modules.hou`.
+script (`houdini_plugin/houdini_mcp_startup.py`) is deployed to
+`~/Documents/houdiniX.Y/scripts/` via `install_startup_scripts`. It is installed
+as a **separate file** alongside `456.py`, with a single hook line injected into
+`456.py` — existing content is fully preserved (non-destructive).
+
+When Houdini starts, the hook runs our script, which:
+1. Checks env vars and config to decide whether to start RPyC
+2. Allocates a free port (or uses the one specified via env var)
+3. Calls `hrpyc.start_server(port=<port>)` to start the RPyC listener
+4. Installs event monitoring callbacks (deferred until UI is ready)
+
+The startup script does **not** register sessions or start MCP servers — it
+only starts the RPyC listener. Session registration happens lazily when the
+MCP server actually connects.
+
+The MCP server starts idle (via `.mcp.json`). When an agent calls a Houdini
+tool, it auto-discovers the RPyC port, connects with
+`rpyc.classic.connect("localhost", <port>)`, registers the session, and
+accesses the full `hou` module remotely via `conn.modules.hou`.
 
 > **RPyC version pinning**: Houdini 20.5 and 21.0 both ship `rpyc` 4.x internally.
 > This package pins `rpyc>=4.1,<5` — RPyC 6.x has an incompatible wire protocol.
@@ -194,9 +349,15 @@ Test output (.hip files) goes to the system temp directory
 ## Troubleshooting
 
 **RPyC connection refused**
-- Ensure startup scripts are installed: call `install_startup_scripts()`
+- Ensure startup scripts are installed: call `install_startup_scripts()` or use WebUI
 - Restart Houdini after installing scripts
 - Check `~/houdini_mcp/houdini_startup.log` for errors
+- For agent-launched Houdini, check that `HOUDINI_MCP_ENABLED=1` is set
+
+**Port conflicts**
+- Use `list_all_sessions()` or WebUI to see which ports are in use
+- Run `cleanup_stale_sessions()` to remove dead sessions
+- Adjust `port_range` in config if you need more ports
 
 **Wrong RPyC version**
 - This server requires `rpyc>=4.1,<5`. Check with `pip show rpyc`.

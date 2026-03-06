@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Config - Houdini MCP</title>
+  <style>
+    :root {
+      --bg: #1a1a1a;
+      --surface: #262626;
+      --surface2: #333333;
+      --surface3: #3d3d3d;
+      --accent: #ff6600;
+      --accent-hover: #e55b00;
+      --accent-dim: #ba4f25;
+      --accent-glow: rgba(255, 102, 0, 0.15);
+      --text: #cccccc;
+      --text-dim: #808080;
+      --text-bright: #e6e6e6;
+      --success: #4caf50;
+      --error: #e53935;
+      --border: #333333;
+      --code-bg: #1a1a1a;
+      --code-text: #f7956a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .logo { color: var(--accent); font-weight: 700; font-size: 15px; letter-spacing: -0.3px; }
+    .logo span { color: var(--text-dim); font-weight: 400; }
+    nav { display: flex; gap: 2px; margin-left: 24px; }
+    nav a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 12px 14px;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    nav a:hover { color: var(--text); }
+    nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .spacer { flex: 1; }
+    .health-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+    .health-dot.offline { background: var(--error); }
+
+    .container { max-width: 900px; margin: 0 auto; padding: 24px; }
+
+    /* Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+    .card-body { padding: 16px; }
+    .card-actions { display: flex; gap: 6px; }
+
+    /* Buttons */
+    .btn {
+      padding: 5px 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      color: white;
+      transition: background 0.15s;
+    }
+    .btn-accent { background: var(--accent); }
+    .btn-accent:hover { background: var(--accent-hover); }
+    .btn-ghost {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+    .btn-ghost:hover { border-color: var(--text-dim); color: var(--text); }
+    .btn-danger { background: none; border: 1px solid var(--error); color: var(--error); }
+    .btn-danger:hover { background: var(--error); color: #fff; }
+
+    /* Config rows */
+    .config-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .config-row:last-child { border-bottom: none; }
+    .config-label { font-size: 13px; color: var(--text); }
+    .config-desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+    /* Toggle */
+    .toggle {
+      position: relative;
+      width: 36px; height: 20px;
+      background: var(--surface3);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+    .toggle.on { background: var(--accent); }
+    .toggle::after {
+      content: '';
+      position: absolute;
+      width: 16px; height: 16px;
+      background: white;
+      border-radius: 50%;
+      top: 2px; left: 2px;
+      transition: transform 0.2s;
+    }
+    .toggle.on::after { transform: translateX(16px); }
+
+    /* Port range */
+    .port-range { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text-dim); }
+    .port-range input {
+      width: 72px;
+      padding: 4px 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      -moz-appearance: textfield;
+    }
+    .port-range input::-webkit-outer-spin-button,
+    .port-range input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .port-range input:focus { border-color: var(--accent-dim); outline: none; }
+
+    /* Injection section */
+    .inject-desc {
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.7;
+      margin-bottom: 16px;
+    }
+    .inject-desc code {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 11px;
+      color: var(--code-text);
+    }
+
+    .inject-table { width: 100%; border-collapse: collapse; }
+    .inject-table th {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      font-weight: 600;
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .inject-table td {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .inject-table tr:last-child td { border-bottom: none; }
+    .inject-table .ver-cell { font-size: 14px; font-weight: 600; color: var(--text-bright); white-space: nowrap; }
+    .inject-table .status-cell { }
+    .inject-table .action-cell { text-align: right; white-space: nowrap; }
+
+    .status-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .status-tag.active { background: #1b3a1b; color: var(--success); border: 1px solid #2d5a2d; }
+    .status-tag.down { background: #3a1b1b; color: var(--error); border: 1px solid #5a2d2d; }
+
+    .inject-path-line {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 6px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+
+    /* Installations section */
+    .install-table { width: 100%; border-collapse: collapse; }
+    .install-table th {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      font-weight: 600;
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .install-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .install-table tr:last-child td { border-bottom: none; }
+    .install-ver { font-weight: 600; color: var(--text-bright); }
+
+    .install-toggle {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 3px;
+    }
+    .install-toggle:hover { color: var(--text); background: var(--surface2); }
+
+    .install-details {
+      display: none;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-dim);
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      line-height: 1.8;
+      word-break: break-all;
+    }
+    .install-details.open { display: block; }
+    .install-details .detail-label {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      color: var(--text-dim);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .install-details .detail-val { color: var(--code-text); }
+
+    .empty-state { text-align: center; padding: 24px; color: var(--text-dim); font-size: 13px; }
+
+    .toast {
+      position: fixed;
+      bottom: 20px; right: 20px;
+      background: var(--surface2);
+      border: 1px solid var(--accent-dim);
+      border-radius: 6px;
+      padding: 10px 18px;
+      font-size: 13px;
+      color: var(--text-bright);
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 100;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="logo">Houdini MCP <span>Manager</span></span>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/config" class="active">HouConfig</a>
+      <a href="/agent-config">AgentConfig</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="health-dot" id="health-dot"></div>
+  </header>
+
+  <div class="container">
+
+    <!-- Launch -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Launch</span></div>
+      <div class="card-body">
+        <div class="config-row">
+          <div>
+            <div class="config-label">Human Launch: Auto-start RPyC</div>
+            <div class="config-desc">Start RPyC listener when Houdini is opened manually</div>
+          </div>
+          <div class="toggle" id="toggle-human" onclick="toggleConfig('human')"></div>
+        </div>
+        <div class="config-row">
+          <div>
+            <div class="config-label">Agent Launch: Auto-start RPyC</div>
+            <div class="config-desc">Start RPyC listener when Agent launches Houdini</div>
+          </div>
+          <div class="toggle on" id="toggle-agent" onclick="toggleConfig('agent')"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Port -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Port</span></div>
+      <div class="card-body">
+        <div class="config-row">
+          <div>
+            <div class="config-label">Port Range</div>
+            <div class="config-desc">Range for dynamic port allocation (takes effect on next allocation)</div>
+          </div>
+          <div class="port-range">
+            <input type="number" id="port-min" value="18811">
+            <span>-</span>
+            <input type="number" id="port-max" value="18899">
+            <button class="btn btn-accent" onclick="savePortRange()">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Houdini Injection -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Houdini Startup Injection</span>
+        <div class="card-actions">
+          <button class="btn btn-ghost" onclick="loadInjections()">Refresh</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="inject-desc">
+          Injects a one-line hook into <code>456.py</code> (Houdini's startup script) that loads <code>houdini_mcp_startup.py</code>.<br>
+          This enables auto-discovery by the MCP server when Houdini starts. The injection is non-destructive and can be removed at any time.
+        </div>
+        <table class="inject-table" id="inject-table">
+          <thead><tr><th>Version</th><th>Status</th><th></th></tr></thead>
+          <tbody id="inject-body">
+            <tr><td colspan="3" class="empty-state">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Houdini Installations -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Houdini Installations</span>
+        <div class="card-actions">
+          <button class="btn btn-ghost" onclick="loadVersions()">Refresh</button>
+        </div>
+      </div>
+      <div class="card-body" style="padding:0 16px;">
+        <table class="install-table" id="install-table">
+          <thead><tr><th>Version</th><th>Path</th><th></th></tr></thead>
+          <tbody id="install-body">
+            <tr><td colspan="3" class="empty-state">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+      });
+      return res.json();
+    }
+
+    // ── Launch Config ──
+    async function loadConfig() {
+      const data = await api('/api/config');
+      const humanOn = data.human_launch?.auto_start_rpyc || false;
+      const agentOn = data.agent_launch?.auto_start_rpyc !== false;
+      document.getElementById('toggle-human').classList.toggle('on', humanOn);
+      document.getElementById('toggle-agent').classList.toggle('on', agentOn);
+      if (data.port_range) {
+        document.getElementById('port-min').value = data.port_range[0];
+        document.getElementById('port-max').value = data.port_range[1];
+      }
+    }
+
+    async function toggleConfig(type) {
+      const el = document.getElementById(`toggle-${type}`);
+      const newVal = !el.classList.contains('on');
+      el.classList.toggle('on', newVal);
+      const body = type === 'human'
+        ? { human_launch: { auto_start_rpyc: newVal } }
+        : { agent_launch: { auto_start_rpyc: newVal } };
+      await api('/api/config', { method: 'PUT', body: JSON.stringify(body) });
+      showToast(`${type} auto-start: ${newVal ? 'ON' : 'OFF'}`);
+    }
+
+    // ── Port Range ──
+    async function savePortRange() {
+      const min = parseInt(document.getElementById('port-min').value);
+      const max = parseInt(document.getElementById('port-max').value);
+      if (isNaN(min) || isNaN(max) || min >= max) {
+        showToast('Invalid port range');
+        return;
+      }
+      await api('/api/config', { method: 'PUT', body: JSON.stringify({ port_range: [min, max] }) });
+      showToast(`Port range saved: ${min} - ${max}`);
+    }
+
+    // ── Injection ──
+    async function loadInjections() {
+      const data = await api('/api/houdini/versions');
+      const tbody = document.getElementById('inject-body');
+      if (!data.installations || data.installations.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No Houdini installations detected</td></tr>';
+        return;
+      }
+
+      // Group by major version
+      const seen = new Map();
+      for (const inst of data.installations) {
+        const match = inst.version.match(/^(\d+\.\d+)/);
+        if (!match) continue;
+        const major = match[1];
+        if (!seen.has(major)) seen.set(major, inst);
+      }
+
+      tbody.innerHTML = Array.from(seen.entries()).map(([major, inst]) => {
+        const installed = inst.startup_installed;
+        const inj = inst.injection;
+        const statusTag = installed
+          ? '<span class="status-tag active">Injected</span>'
+          : '<span class="status-tag down">Not Injected</span>';
+        const actionBtn = installed
+          ? `<button class="btn btn-danger" onclick="uninstallHook('${major}')">Remove</button>`
+          : `<button class="btn btn-accent" onclick="installHook('${major}')">Inject</button>`;
+
+        const pathLine = inj
+          ? `<div class="inject-path-line">${inj.hook_file}</div>`
+          : '';
+
+        return `<tr>
+          <td class="ver-cell">Houdini ${major}</td>
+          <td class="status-cell">${statusTag}${pathLine}</td>
+          <td class="action-cell">${actionBtn}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function installHook(majorVer) {
+      await api(`/api/houdini/startup/install?version=${majorVer}`, { method: 'POST' });
+      showToast(`Hook injected for Houdini ${majorVer}`);
+      loadInjections();
+    }
+
+    async function uninstallHook(majorVer) {
+      await api(`/api/houdini/startup/uninstall?version=${majorVer}`, { method: 'DELETE' });
+      showToast(`Hook removed for Houdini ${majorVer}`);
+      loadInjections();
+    }
+
+    // ── Installations ──
+    async function loadVersions() {
+      const data = await api('/api/houdini/versions');
+      const tbody = document.getElementById('install-body');
+      if (!data.installations || data.installations.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No Houdini installations found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.installations.map((inst, idx) => {
+        const gui = inst.gui_exe || 'N/A';
+        const hython = inst.hython || 'N/A';
+        return `<tr>
+          <td><span class="install-ver">Houdini ${inst.version}</span></td>
+          <td style="font-size:11px;color:var(--text-dim);font-family:'Cascadia Code',monospace;">${inst.dir}</td>
+          <td style="text-align:right;">
+            <button class="install-toggle" onclick="toggleDetails('detail-${idx}', this)">▶ Details</button>
+          </td>
+        </tr>
+        <tr id="detail-${idx}" style="display:none;">
+          <td colspan="3" style="padding:0 12px 12px 12px; border-bottom: 1px solid var(--border);">
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:10px 14px;font-size:11px;line-height:1.8;">
+              <span class="detail-label">GUI Executable:</span><br>
+              <span style="color:var(--code-text);font-family:'Cascadia Code',monospace;">${gui}</span><br>
+              <span class="detail-label" style="margin-top:4px;display:inline-block;">Hython (CLI):</span><br>
+              <span style="color:var(--code-text);font-family:'Cascadia Code',monospace;">${hython}</span>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    function toggleDetails(id, btn) {
+      const row = document.getElementById(id);
+      const open = row.style.display !== 'none';
+      row.style.display = open ? 'none' : 'table-row';
+      btn.textContent = open ? '▶ Details' : '▼ Details';
+    }
+
+    // ── Health ──
+    async function checkHealth() {
+      try {
+        const data = await api('/health');
+        document.getElementById('health-dot').classList.toggle('offline', data.status !== 'ok');
+      } catch { document.getElementById('health-dot').classList.add('offline'); }
+    }
+
+    // ── Init ──
+    checkHealth();
+    loadConfig();
+    loadInjections();
+    loadVersions();
+    setInterval(checkHealth, 10000);
+  </script>
+</body>
+</html>
