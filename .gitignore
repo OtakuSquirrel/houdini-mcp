@@ -42,6 +42,9 @@ Thumbs.db
 *.jpeg
 *.exr
 
+# But keep README images
+!imgs/*.png
+
 # Houdini session data
 houdini_temp/
 

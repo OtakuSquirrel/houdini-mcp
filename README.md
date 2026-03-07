@@ -72,14 +72,21 @@ Windows_webui.bat
 .venv\Scripts\python.exe -m houdini_mcp.webui --port 9800
 ```
 
-The WebUI has 4 pages:
+### Dashboard — sessions, ports, processes at a glance
 
-| Page | What it does |
-|------|-------------|
-| **Dashboard** | Live overview of all Houdini instances, MCP sessions, port status, and processes. Start/stop instances from here. |
-| **Config** | Set port range, Houdini search paths, toggle RPyC auto-start for human/agent launches. |
-| **MCP Tools** | Enable/disable individual tools per category. Disabled tools are hidden from agents. |
-| **Agent Config** | Generate MCP client configuration snippets for Claude Code, Cursor, and other clients. |
+![Dashboard](imgs/dashboard.png)
+
+### HouConfig — port range, search paths, startup hook injection
+
+![Config](imgs/config.png)
+
+### MCP Tools — enable/disable tools per category
+
+![MCP Tools](imgs/tools.png)
+
+### AgentConfig — generate MCP client config for Claude Code, Cursor, etc.
+
+![Agent Config](imgs/agent_config.png)
 
 ## Instance Pooling
 
