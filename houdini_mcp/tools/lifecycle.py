@@ -88,7 +88,7 @@ def _get_houdini_prefs_dir(version: str) -> Path:
 def _is_port_open(port: int, host: str = "localhost") -> bool:
     """Check if the RPyC port is accepting connections."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(1)
+        s.settimeout(0.3)
         return s.connect_ex((host, port)) == 0
 
 
@@ -366,6 +366,8 @@ def start_houdini(
     env["HOUDINI_MCP_ENABLED"] = "1"
     env["HOUDINI_MCP_PORT"] = str(port)
 
+    _gui_via_start = False
+
     if mode == "hython":
         hython_path = inst.get("hython")
         if not hython_path:
@@ -400,16 +402,21 @@ def start_houdini(
         except Exception:
             pass  # Non-fatal — user may have installed manually
 
-        cmd = [gui_exe]
+        # Use Windows `start` command to launch GUI — this matches the
+        # behaviour of double-clicking the .exe and avoids the ~20s
+        # startup penalty caused by DETACHED_PROCESS + DEVNULL pipes.
+        # NOTE: `start` exits immediately, so proc is the shell, not
+        # Houdini itself.  We set _gui_via_start so the poll loop
+        # knows not to treat shell exit as a Houdini crash.
+        shell_cmd = f'start "" "{gui_exe}"'
         if open_file:
-            cmd.append(open_file)
+            shell_cmd += f' "{open_file}"'
         proc = subprocess.Popen(
-            cmd,
+            shell_cmd,
+            shell=True,
             env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
         )
+        _gui_via_start = True
 
     # Track this process as owned by this MCP server
     houdini.register_process(port, proc)
@@ -437,37 +444,29 @@ def start_houdini(
     connect_attempts = 0
 
     while time.time() - start_time < timeout:
-        if proc.poll() is not None:
+        if not _gui_via_start and proc.poll() is not None:
             houdini.unregister_process(port)
             raise RuntimeError(
                 f"Houdini process exited with code {proc.returncode}"
             )
 
         if _is_port_open(port):
-            if port_open_since is None:
-                port_open_since = time.time()
+            connect_attempts += 1
+            try:
+                houdini.connect(port=port)
+                elapsed = int(time.time() - start_time)
+                result["rpyc_connected"] = True
+                result["session_id"] = get_session_id()
+                result["startup_seconds"] = elapsed
+                result["message"] = (
+                    f"Houdini {version} ({mode}) ready on port {port} "
+                    f"after {elapsed}s. Session: {result['session_id']}"
+                )
+                return result
+            except Exception as e:
+                result["rpyc_connect_error"] = str(e)
 
-            # Give Houdini a moment after port opens before first connect
-            if time.time() - port_open_since >= 1.0:
-                connect_attempts += 1
-                try:
-                    houdini.connect(port=port)
-                    elapsed = int(time.time() - start_time)
-                    result["rpyc_connected"] = True
-                    result["session_id"] = get_session_id()
-                    result["startup_seconds"] = elapsed
-                    result["message"] = (
-                        f"Houdini {version} ({mode}) ready on port {port} "
-                        f"after {elapsed}s. Session: {result['session_id']}"
-                    )
-                    return result
-                except Exception as e:
-                    result["rpyc_connect_error"] = str(e)
-        else:
-            # Port closed again (Houdini might be restarting internals)
-            port_open_since = None
-
-        time.sleep(2)
+        time.sleep(0.5)
 
     elapsed = int(time.time() - start_time)
     result["rpyc_connected"] = False
