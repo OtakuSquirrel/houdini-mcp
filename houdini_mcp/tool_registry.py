@@ -90,6 +90,8 @@ CATEGORY_DEFS: dict[str, dict] = {
             "start_houdini": "Launch Houdini and wait for RPyC",
             "stop_houdini": "Stop the Houdini process",
             "ensure_houdini_ready": "Start Houdini if not running, idempotent",
+            "warm_pool": "Batch-launch idle Houdini instances into the pool",
+            "is_houdini_healthy": "Check if Houdini is responsive (never hangs)",
         },
     },
     "Screen": {
@@ -118,6 +120,9 @@ CATEGORY_DEFS: dict[str, dict] = {
             "get_current_session": "Get this MCP server's session info",
             "cleanup_stale_sessions": "Remove sessions with dead processes",
             "scan_ports": "Scan port range for Houdini/MCP status",
+            "get_pool_status": "Show idle/active Houdini instance counts",
+            "acquire_from_pool": "Grab an idle instance and connect to it",
+            "adopt_idle": "Kill stuck Houdini, adopt an idle replacement",
             "get_mcp_config": "Get MCP configuration",
             "update_mcp_config": "Update MCP configuration",
             "connect_to_houdini": "Connect to a Houdini instance on a port",

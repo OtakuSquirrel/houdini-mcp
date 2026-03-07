@@ -7,6 +7,8 @@ current session.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from houdini_mcp.server import mcp, houdini, get_session_id
 from houdini_mcp import registry
 from houdini_mcp import config
@@ -129,8 +131,6 @@ def scan_ports() -> dict:
         Dict with port range, active ports with dual status, free count,
         and next_free_port with ready-to-use commands.
     """
-    from concurrent.futures import ThreadPoolExecutor
-
     min_port, max_port = config.get_port_range()
     sessions = registry.list_sessions()
     session_ports = {s["port"]: s for s in sessions if "port" in s}
@@ -201,6 +201,180 @@ def scan_ports() -> dict:
         }
 
     return result
+
+
+@mcp.tool()
+def get_pool_status() -> dict:
+    """Get a summary of the Houdini instance pool.
+
+    Shows how many instances are idle (listening, ready to acquire)
+    vs active (linked to an MCP session). Use this to decide whether
+    to warm_pool() more instances or acquire_from_pool().
+
+    Returns:
+        Dict with idle/active counts and port details.
+    """
+    min_port, max_port = config.get_port_range()
+    sessions = registry.list_sessions()
+    session_ports = {s["port"]: s for s in sessions if "port" in s}
+
+    # Check MCP server PIDs for session liveness
+    session_pids_alive = {}
+    for port_num, s in session_ports.items():
+        mcp_pid = s.get("pid")
+        session_pids_alive[port_num] = registry._is_pid_alive(mcp_pid) if mcp_pid else False
+
+    ports = list(range(min_port, max_port + 1))
+    with ThreadPoolExecutor(max_workers=30) as executor:
+        listening_flags = list(executor.map(registry._is_port_in_use, ports))
+
+    idle = []   # listening RPyC, no live MCP session
+    active = [] # listening RPyC + live MCP session (linked)
+
+    for port, is_listening in zip(ports, listening_flags):
+        if not is_listening:
+            continue
+        has_live_session = (
+            port in session_ports and session_pids_alive.get(port, False)
+        )
+        entry = {"port": port}
+        if port in session_ports:
+            s = session_ports[port]
+            entry["version"] = s.get("version", "")
+            entry["houdini_pid"] = s.get("houdini_pid")
+        if has_live_session:
+            entry["session_id"] = session_ports[port].get("session_id")
+            active.append(entry)
+        else:
+            idle.append(entry)
+
+    return {
+        "idle": idle,
+        "idle_count": len(idle),
+        "active": active,
+        "active_count": len(active),
+        "total_listening": len(idle) + len(active),
+        "message": f"{len(idle)} idle, {len(active)} active",
+    }
+
+
+@mcp.tool()
+def acquire_from_pool(version: str | None = None) -> dict:
+    """Acquire an idle Houdini instance from the pool and connect to it.
+
+    Scans for "listening" ports (RPyC active, no MCP session) and
+    connects to the first one found. The instance transitions from
+    idle to active.
+
+    Args:
+        version: Optional version filter (e.g. '21.0'). If None, takes any.
+
+    Returns:
+        Dict with connection info, or error if pool is empty.
+    """
+    min_port, max_port = config.get_port_range()
+    sessions = registry.list_sessions()
+
+    # Ports with live MCP sessions — these are "active", not idle
+    live_session_ports = set()
+    for s in sessions:
+        mcp_pid = s.get("pid")
+        if s.get("port") and mcp_pid and registry._is_pid_alive(mcp_pid):
+            live_session_ports.add(s["port"])
+
+    ports = list(range(min_port, max_port + 1))
+    with ThreadPoolExecutor(max_workers=30) as executor:
+        listening_flags = list(executor.map(registry._is_port_in_use, ports))
+
+    # Find idle ports (listening but no live MCP session)
+    idle_ports = [
+        p for p, listening in zip(ports, listening_flags)
+        if listening and p not in live_session_ports
+    ]
+
+    if not idle_ports:
+        return {
+            "status": "pool_empty",
+            "message": (
+                "No idle Houdini instances available. "
+                "Use warm_pool() to start some, or start_houdini() for a single instance."
+            ),
+        }
+
+    # If version filter specified, try to match via RPyC query
+    target_port = None
+    if version is not None:
+        import rpyc
+        for p in idle_ports:
+            try:
+                conn = rpyc.classic.connect("localhost", p)
+                ver = conn.modules.hou.applicationVersionString()
+                conn.close()
+                if ver.startswith(version):
+                    target_port = p
+                    break
+            except Exception:
+                continue
+        if target_port is None:
+            return {
+                "status": "no_match",
+                "message": f"No idle instance with version '{version}'. Idle ports: {idle_ports}",
+            }
+    else:
+        target_port = idle_ports[0]
+
+    # Connect MCP to the chosen idle instance
+    houdini.connect(port=target_port)
+
+    import houdini_mcp.server as _srv
+    _srv._session_id = houdini._session_id
+
+    return {
+        "status": "acquired",
+        "port": target_port,
+        "session_id": houdini._session_id,
+        "connections": houdini.list_connections(),
+        "message": f"Acquired idle instance on port {target_port}.",
+    }
+
+
+@mcp.tool()
+def adopt_idle(version: str | None = None) -> dict:
+    """Abandon a stuck Houdini and adopt an idle instance from the pool.
+
+    Forcefully kills the current active Houdini process, then acquires
+    an idle instance. Use this when Houdini becomes unresponsive.
+
+    Args:
+        version: Optional version filter for the replacement instance.
+
+    Returns:
+        Dict with kill result and new connection info.
+    """
+    killed_info = None
+    old_port = houdini._active_port
+
+    # Step 1: kill the current active Houdini
+    if old_port is not None:
+        from houdini_mcp.tools.lifecycle import stop_houdini
+        try:
+            killed_info = stop_houdini(force=True, port=old_port)
+        except Exception as e:
+            killed_info = {"status": "kill_failed", "error": str(e), "port": old_port}
+
+    # Step 2: acquire from pool
+    acquire_result = acquire_from_pool(version=version)
+
+    return {
+        "killed": killed_info,
+        "acquired": acquire_result,
+        "message": (
+            f"Killed previous instance on port {old_port}. "
+            + acquire_result.get("message", "")
+            if killed_info
+            else acquire_result.get("message", "")
+        ),
+    }
 
 
 @mcp.tool()

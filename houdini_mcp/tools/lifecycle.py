@@ -13,13 +13,18 @@ Multi-instance support: Dynamic port allocation via session registry.
 
 from __future__ import annotations
 
+import ctypes
 import os
 import re
 import shutil
 import socket
 import subprocess
+import threading
 import time
+from ctypes import wintypes
 from pathlib import Path
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from houdini_mcp.server import mcp, houdini, set_port, get_session_id
 from houdini_mcp import registry
@@ -589,3 +594,447 @@ def ensure_houdini_ready(
 
     # Need to launch Houdini
     return start_houdini(version=version, mode=mode, wait_for_rpyc=True, timeout=timeout)
+
+
+def _launch_houdini_no_connect(
+    version: str | None = None,
+    mode: str = "gui",
+    port: int | None = None,
+) -> dict:
+    """Launch a Houdini instance without connecting MCP.
+
+    The instance will start its RPyC listener (via 456.py hook) and
+    sit in "listening" state — idle and ready for acquire_from_pool().
+
+    Returns:
+        Dict with port, version, pid.
+
+    Raises:
+        RuntimeError: If no installation found or launch failed.
+    """
+    if port is None:
+        port = registry.allocate_port()
+
+    # Already listening on this port — nothing to do
+    if _is_port_open(port):
+        return {
+            "status": "already_listening",
+            "port": port,
+        }
+
+    installations = _find_houdini_installations()
+    if not installations:
+        raise RuntimeError("No Houdini installation found.")
+
+    inst = None
+    if version is not None:
+        for i in installations:
+            if i["version"] == version or i["version"].startswith(version):
+                inst = i
+                break
+        if inst is None:
+            available = [i["version"] for i in installations]
+            raise ValueError(
+                f"Houdini version {version} not found. Available: {available}"
+            )
+    else:
+        inst = installations[0]
+        version = inst["version"]
+
+    env = os.environ.copy()
+    env["HOUDINI_MCP_ENABLED"] = "1"
+    env["HOUDINI_MCP_PORT"] = str(port)
+
+    if mode == "hython":
+        hython_path = inst.get("hython")
+        if not hython_path:
+            raise RuntimeError(f"hython.exe not found for Houdini {version}")
+        script = (
+            "import hrpyc, time, sys; "
+            f"hrpyc.start_server(port={port}); "
+            f"print('[HoudiniMCP] RPyC server started on port {port}', flush=True); "
+            "[time.sleep(1) for _ in iter(int,1)]"
+        )
+        proc = subprocess.Popen(
+            [hython_path, "-c", script],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+    else:
+        gui_exe = inst.get("gui_exe")
+        if not gui_exe:
+            raise RuntimeError(f"houdinifx.exe not found for Houdini {version}")
+        # Auto-install startup scripts if needed
+        try:
+            prefs_dir = _get_houdini_prefs_dir(version)
+            scripts_dir = prefs_dir / "scripts"
+            if not (scripts_dir / "456.py").exists():
+                install_startup_scripts(version=version)
+        except Exception:
+            pass
+        shell_cmd = f'start "" "{gui_exe}"'
+        proc = subprocess.Popen(shell_cmd, shell=True, env=env)
+
+    return {
+        "status": "launched",
+        "port": port,
+        "version": version,
+        "mode": mode,
+        "pid": proc.pid,
+    }
+
+
+def _wait_for_port(port: int, timeout: int) -> bool:
+    """Block until the given port starts accepting connections."""
+    start = time.time()
+    while time.time() - start < timeout:
+        if _is_port_open(port):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+@mcp.tool()
+def warm_pool(
+    instances: list[dict],
+    mode: str = "gui",
+    timeout: int = 120,
+) -> dict:
+    """Batch-launch Houdini instances into the idle pool (no MCP connection).
+
+    All instances start in parallel to maximize hardware utilization.
+    Each instance runs its RPyC listener and waits for a connection —
+    use acquire_from_pool() to grab one later.
+
+    Args:
+        instances: List of dicts with 'version' (optional) and 'count'.
+                   Example: [{"version": "21.0.551", "count": 2}]
+                   Omit 'version' to use the latest installed version.
+        mode: 'gui' (default) or 'hython'.
+        timeout: Max seconds to wait for RPyC per instance (default 120).
+
+    Returns:
+        Dict with launched ports and any errors.
+    """
+    # Phase 1: allocate ports and launch all processes in parallel
+    launch_tasks = []
+    for spec in instances:
+        version = spec.get("version")
+        count = spec.get("count", 1)
+        for _ in range(count):
+            port = registry.allocate_port()
+            launch_tasks.append({"version": version, "port": port})
+
+    launched = []
+    errors = []
+
+    # Launch all processes (fire-and-forget Popen — near-instant)
+    for task in launch_tasks:
+        try:
+            result = _launch_houdini_no_connect(
+                version=task["version"],
+                mode=mode,
+                port=task["port"],
+            )
+            launched.append(result)
+        except Exception as e:
+            errors.append({"port": task["port"], "version": task["version"], "error": str(e)})
+
+    if not launched:
+        return {"status": "failed", "errors": errors}
+
+    # Phase 2: wait for all RPyC listeners in parallel
+    ports_to_wait = [r["port"] for r in launched if r["status"] == "launched"]
+    ready_ports = []
+    timed_out_ports = []
+
+    with ThreadPoolExecutor(max_workers=len(ports_to_wait) or 1) as executor:
+        futures = {
+            executor.submit(_wait_for_port, p, timeout): p
+            for p in ports_to_wait
+        }
+        for future in as_completed(futures):
+            port = futures[future]
+            if future.result():
+                ready_ports.append(port)
+            else:
+                timed_out_ports.append(port)
+
+    return {
+        "status": "ok",
+        "launched": len(launched),
+        "ready": ready_ports,
+        "timed_out": timed_out_ports,
+        "errors": errors,
+        "message": (
+            f"Launched {len(launched)} instance(s). "
+            f"{len(ready_ports)} ready, {len(timed_out_ports)} timed out."
+        ),
+    }
+
+
+# ── Health check helpers (all with hard timeouts, never hang) ──
+
+
+def _find_pid_for_port(port: int) -> int | None:
+    """Find the PID of the process listening on a TCP port.
+
+    Checks the MCP session registry first (instant), then falls back
+    to PowerShell Get-NetTCPConnection (OS-level, ~200ms).
+    """
+    # Fast path: session registry
+    for s in registry.list_sessions():
+        if s.get("port") == port and s.get("houdini_pid"):
+            return s["houdini_pid"]
+
+    # Fallback: query OS for port → PID mapping
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"(Get-NetTCPConnection -LocalPort {port} -State Listen "
+             f"-ErrorAction SilentlyContinue).OwningProcess"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.stdout.strip():
+            return int(r.stdout.strip().split()[0])
+    except Exception:
+        pass
+    return None
+
+
+def _check_window_responding(pid: int) -> bool | None:
+    """Check if a process's window is responding via Win32 IsHungAppWindow.
+
+    Returns True (responding), False (hung), or None (no window found).
+    Pure Win32 API — queries the OS, never contacts Houdini. Cannot hang.
+    """
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+    found = False
+    responding = None
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def callback(hwnd, _):
+        nonlocal found, responding
+        if not _user32.IsWindowVisible(hwnd):
+            return True
+        wpid = wintypes.DWORD()
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+        if wpid.value != pid:
+            return True
+        # Skip windows without a title (invisible helper windows)
+        if _user32.GetWindowTextLengthW(hwnd) <= 0:
+            return True
+        found = True
+        hung = _user32.IsHungAppWindow(hwnd)
+        responding = not hung
+        # Stop on first responding window; continue if hung (check others)
+        return hung
+    _user32.EnumWindows(callback, 0)
+    return responding if found else None
+
+
+def _sample_cpu_percent(pid: int, interval: float = 0.5) -> float | None:
+    """Sample CPU usage % via Win32 GetProcessTimes.
+
+    Returns total CPU % (sum of all cores), or None on failure.
+    Pure Win32 API — queries the OS kernel, never contacts Houdini. Cannot hang.
+    """
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    h = _kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not h:
+        return None
+
+    def _cpu_time():
+        c, e, k, u = (wintypes.FILETIME() for _ in range(4))
+        ok = _kernel32.GetProcessTimes(
+            h, ctypes.byref(c), ctypes.byref(e),
+            ctypes.byref(k), ctypes.byref(u),
+        )
+        if not ok:
+            return None
+        kt = k.dwLowDateTime | (k.dwHighDateTime << 32)
+        ut = u.dwLowDateTime | (u.dwHighDateTime << 32)
+        return kt + ut  # 100-nanosecond intervals
+
+    try:
+        t1 = _cpu_time()
+        if t1 is None:
+            return None
+        time.sleep(interval)
+        t2 = _cpu_time()
+        if t2 is None:
+            return None
+        delta_s = (t2 - t1) / 10_000_000
+        return round(delta_s / interval * 100, 1)
+    finally:
+        _kernel32.CloseHandle(h)
+
+
+# Re-use the kernel32 handle from screen.py's pattern
+_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+
+def _rpyc_ping_with_timeout(port: int, timeout: float = 3.0) -> bool:
+    """RPyC ping in a daemon thread with hard timeout. NEVER hangs.
+
+    If the thread gets stuck inside a frozen Houdini, the daemon flag
+    ensures it is cleaned up when the MCP server process exits.
+    """
+    import rpyc
+
+    result = [False]
+
+    def _ping():
+        try:
+            conn = rpyc.classic.connect("localhost", port)
+            conn.ping()
+            conn.close()
+            result[0] = True
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_ping, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    return result[0]
+
+
+@mcp.tool()
+def is_houdini_healthy(port: int | None = None) -> dict:
+    """Check if Houdini is responsive. Every check has a hard timeout — NEVER hangs.
+
+    Combines OS-level and RPyC-level signals to produce a clear verdict:
+    - **healthy**: GUI responsive + RPyC working
+    - **busy**: GUI frozen but RPyC OK (or high CPU) — likely computing, wait
+    - **hung**: GUI frozen + RPyC unresponsive + low CPU — truly stuck, use adopt_idle()
+    - **dead**: No Houdini process found on this port
+    - **no_rpyc**: Houdini running but RPyC port not listening
+
+    How each check works (and why it won't hang):
+    - Process alive: Win32 OpenProcess → queries OS kernel
+    - Window responding: Win32 IsHungAppWindow → queries OS window manager
+    - CPU usage: Win32 GetProcessTimes (0.5s sample) → queries OS kernel
+    - Port listening: TCP connect with 0.3s socket timeout
+    - RPyC ping: runs in a daemon thread with 3s join timeout
+
+    Args:
+        port: RPyC port to check. Defaults to the active connection's port.
+
+    Returns:
+        Dict with verdict, individual check results, and human-readable details.
+    """
+    target_port = port or houdini._active_port
+    if target_port is None:
+        target_port = houdini.port
+
+    result = {
+        "port": target_port,
+        "pid": None,
+        "process_alive": False,
+        "window_responding": None,
+        "port_listening": False,
+        "rpyc_responsive": False,
+        "cpu_percent": None,
+        "verdict": "dead",
+        "details": "",
+    }
+
+    # --- Find PID for this port ---
+    pid = _find_pid_for_port(target_port)
+    if pid is None:
+        if _is_port_open(target_port):
+            result["port_listening"] = True
+            result["verdict"] = "unknown"
+            result["details"] = (
+                f"Port {target_port} is listening but cannot determine PID. "
+                f"RPyC may still work — try connect_to_houdini({target_port})."
+            )
+        else:
+            result["verdict"] = "dead"
+            result["details"] = "No process listening on this port."
+        return result
+
+    result["pid"] = pid
+    result["process_alive"] = True
+
+    # --- Run all checks in parallel (max ~3s wall time) ---
+    # Port check is instant, do it synchronously
+    result["port_listening"] = _is_port_open(target_port)
+
+    # RPyC ping (up to 3s), CPU sample (0.5s), window check (~instant)
+    # all run as daemon threads in parallel
+    rpyc_result = [False]
+    cpu_result = [None]
+    window_result = [None]
+
+    def do_rpyc():
+        rpyc_result[0] = _rpyc_ping_with_timeout(target_port, timeout=3)
+
+    def do_cpu():
+        cpu_result[0] = _sample_cpu_percent(pid, interval=0.5)
+
+    def do_window():
+        window_result[0] = _check_window_responding(pid)
+
+    threads = [
+        threading.Thread(target=do_rpyc, daemon=True),
+        threading.Thread(target=do_cpu, daemon=True),
+        threading.Thread(target=do_window, daemon=True),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)  # Hard upper bound for all checks
+
+    result["rpyc_responsive"] = rpyc_result[0]
+    result["cpu_percent"] = cpu_result[0]
+    result["window_responding"] = window_result[0]
+
+    # --- Verdict ---
+    responding = result["window_responding"]
+    rpyc_ok = result["rpyc_responsive"]
+    port_ok = result["port_listening"]
+    cpu = result["cpu_percent"]
+
+    if rpyc_ok:
+        if responding is False:
+            result["verdict"] = "busy"
+            result["details"] = "GUI frozen but RPyC responsive — likely computing"
+        else:
+            result["verdict"] = "healthy"
+            result["details"] = "Houdini is responsive"
+    elif port_ok:
+        # Port open but RPyC not responding
+        if responding is False:
+            if cpu is not None and cpu > 10:
+                result["verdict"] = "busy"
+                result["details"] = (
+                    f"GUI and RPyC unresponsive, CPU at {cpu}% — "
+                    f"likely heavy computation, may recover"
+                )
+            else:
+                cpu_str = f"{cpu}%" if cpu is not None else "unknown"
+                result["verdict"] = "hung"
+                result["details"] = (
+                    f"GUI and RPyC unresponsive, CPU {cpu_str} — "
+                    f"Houdini appears hung, consider adopt_idle()"
+                )
+        else:
+            result["verdict"] = "rpyc_stuck"
+            result["details"] = (
+                "Window responding but RPyC not answering — "
+                "RPyC server thread may be stuck"
+            )
+    else:
+        # Port not listening
+        if responding is not None:
+            result["verdict"] = "no_rpyc"
+            result["details"] = "Houdini running but RPyC port not listening"
+        else:
+            result["verdict"] = "dead"
+            result["details"] = "Process found by PID but no window and no RPyC"
+
+    return result
