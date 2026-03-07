@@ -45,5 +45,8 @@ Thumbs.db
 # Houdini session data
 houdini_temp/
 
+# Internal docs (developer notes, not for distribution)
+docs/
+
 # Claude Code local settings (machine-specific)
 .claude/settings.local.json

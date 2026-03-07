@@ -267,11 +267,14 @@ def _build_dashboard():
             "created_at": s.get("created_at", ""),
         })
 
-    # Only include alive MCP servers (dead ones are stale), sorted by PID
+    # Only include alive MCP servers (dead ones are stale), sorted by PID ascending
     mcp_servers = sorted(
         [g for g in mcp_groups.values() if g["alive"]],
         key=lambda g: g["mcp_pid"],
     )
+    # Sort each server's sessions by port ascending
+    for m in mcp_servers:
+        m["sessions"].sort(key=lambda s: s.get("port") or 0)
 
     # Free port info
     free_count = len(set(ports) - listening_ports - {s.get("port") for s in sessions})
