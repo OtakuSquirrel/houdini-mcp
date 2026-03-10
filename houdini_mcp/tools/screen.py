@@ -37,9 +37,20 @@ def _get_process_name(pid: int) -> str:
 
 
 def _find_houdini_windows() -> list[dict]:
-    """Enumerate all visible windows belonging to Houdini processes."""
+    """Enumerate all visible windows belonging to Houdini processes.
+
+    Filters strictly by process executable name to avoid false positives
+    from other apps whose window titles contain 'houdini' (e.g. VS Code
+    editing HoudiniLearn files, Edge with Houdini MCP tab, File Explorer).
+    """
     import win32gui
     import win32process
+
+    # Known Houdini executable names (lowercase)
+    _HOUDINI_EXES = {
+        "houdinifx.exe", "houdini.exe", "houdinicore.exe",
+        "hindie.exe", "happrentice.exe",
+    }
 
     windows = []
 
@@ -51,9 +62,14 @@ def _find_houdini_windows() -> list[dict]:
             return True
         _, pid = win32process.GetWindowThreadProcessId(hwnd)
         pname = _get_process_name(pid)
-        if "houdini" in pname or "houdini" in title.lower():
+        if pname in _HOUDINI_EXES:
             rect = win32gui.GetWindowRect(hwnd)
             x, y, x2, y2 = rect
+            w = x2 - x
+            h = y2 - y
+            # Skip tiny windows (e.g. minimized launcher slivers < 50px)
+            if w < 50 or h < 50:
+                return True
             windows.append({
                 "hwnd": hwnd,
                 "title": title,
@@ -61,8 +77,8 @@ def _find_houdini_windows() -> list[dict]:
                 "process": pname,
                 "x": x,
                 "y": y,
-                "width": x2 - x,
-                "height": y2 - y,
+                "width": w,
+                "height": h,
             })
         return True
 
